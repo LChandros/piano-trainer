@@ -33,6 +33,7 @@
       <span class="tag" id="measure">m. 0 / 0</span>
       <button id="restart">Restart</button>
       <button id="start">Start</button>
+      <button id="settingsBtn" title="Settings">⚙</button>
     </div>
   </header>
 
@@ -40,6 +41,15 @@
 
   <div id="stageWrap">
     <canvas id="stage"></canvas>
+    <div id="settings" class="panel" hidden>
+      <h3>Appearance</h3>
+      <label class="crow">White-key notes <input type="color" data-theme="whiteNote" /></label>
+      <label class="crow">Black-key notes <input type="color" data-theme="blackNote" /></label>
+      <label class="crow">Note at hit line <input type="color" data-theme="hitNote" /></label>
+      <label class="crow">Label highlight <input type="color" data-theme="labelBg" /></label>
+      <label class="crow">Label text <input type="color" data-theme="labelText" /></label>
+      <button id="resetTheme">Reset to defaults</button>
+    </div>
   </div>
 
   <footer>

@@ -20,6 +20,19 @@
   function noteLabel(p) { return NOTE_NAMES[p % 12] + (Math.floor(p / 12) - 1); }
   function isWhite(p) { return !!WHITE_SET[p % 12]; }
 
+  // ---------- theme (user-customizable, persisted to localStorage) ----------
+  var THEME_DEFAULTS = {
+    whiteNote: "#3aa0ff", blackNote: "#9b6bff", hitNote: "#ffd54a",
+    labelBg: "#ffe14a", labelText: "#10131a"
+  };
+  var theme = (function () {
+    var t = {};
+    for (var k in THEME_DEFAULTS) t[k] = THEME_DEFAULTS[k];
+    try { var s = JSON.parse(localStorage.getItem("pt-theme")); if (s) for (var j in s) if (t.hasOwnProperty(j)) t[j] = s[j]; } catch (e) {}
+    return t;
+  })();
+  function saveTheme() { try { localStorage.setItem("pt-theme", JSON.stringify(theme)); } catch (e) {} }
+
   // ---------- tiny synth ----------
   var Synth = {
     ctx: null, voices: {},
@@ -299,15 +312,20 @@
         var w = pos.w, x = pos.cx - w / 2;
         var atLine = bottomY >= hitY - 4 && topY <= hitY + 4;
         if (clampedBottom <= topY) continue;
-        ctx.fillStyle = atLine ? "#ffd54a" : (pos.white ? "#3aa0ff" : "#9b6bff");
+        ctx.fillStyle = atLine ? theme.hitNote : (pos.white ? theme.whiteNote : theme.blackNote);
         roundRect(ctx, x, topY, w, clampedBottom - topY, 5);
         ctx.fill();
-        if (this.showLabels && (clampedBottom - topY) > 15) {
-          ctx.fillStyle = "#0b0d12";
-          ctx.font = "700 11px system-ui, sans-serif";
-          ctx.textAlign = "center";
-          ctx.fillText(noteLabel(note.pitch), pos.cx, (topY + clampedBottom) / 2 + 4);
-          ctx.textAlign = "left";
+        if (this.showLabels && (clampedBottom - topY) > 20) {
+          var lbl = noteLabel(note.pitch);
+          var midY = (topY + clampedBottom) / 2;
+          ctx.font = "800 15px system-ui, sans-serif";
+          ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          var tw = ctx.measureText(lbl).width, chipW = tw + 12, chipH = 20;
+          ctx.fillStyle = theme.labelBg;
+          roundRect(ctx, pos.cx - chipW / 2, midY - chipH / 2, chipW, chipH, 6); ctx.fill();
+          ctx.fillStyle = theme.labelText;
+          ctx.fillText(lbl, pos.cx, midY + 1);
+          ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
         }
       }
       // hit line
@@ -526,6 +544,26 @@
     progressBar.addEventListener("click", function (e) {
       var rect = progressBar.getBoundingClientRect();
       if (rect.width > 0) Engine.seekToFraction((e.clientX - rect.left) / rect.width);
+    });
+
+    // settings panel (theme colors) — applied live, persisted to localStorage
+    var settingsPanel = document.getElementById("settings");
+    var colorInputs = settingsPanel.querySelectorAll("input[data-theme]");
+    function syncColorInputs() {
+      colorInputs.forEach(function (inp) { inp.value = theme[inp.getAttribute("data-theme")]; });
+    }
+    syncColorInputs();
+    colorInputs.forEach(function (inp) {
+      inp.addEventListener("input", function () {
+        theme[inp.getAttribute("data-theme")] = inp.value; saveTheme();
+      });
+    });
+    document.getElementById("settingsBtn").addEventListener("click", function () {
+      settingsPanel.hidden = !settingsPanel.hidden;
+    });
+    document.getElementById("resetTheme").addEventListener("click", function () {
+      for (var k in THEME_DEFAULTS) theme[k] = THEME_DEFAULTS[k];
+      saveTheme(); syncColorInputs();
     });
     tempo.addEventListener("input", function () {
       tempoVal.textContent = Math.round(parseFloat(tempo.value) * 100) + "%";
