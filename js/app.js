@@ -83,6 +83,11 @@
       g.gain.exponentialRampToValueAtTime(0.0001, end);
       osc.connect(g); g.connect(ctx.destination);
       osc.start(t); osc.stop(end + 0.03);
+    },
+    // silence every currently-held voice (stuck-note safety net)
+    allOff: function () {
+      var pitches = Object.keys(this.voices);
+      for (var i = 0; i < pitches.length; i++) this.off(Number(pitches[i]), true);
     }
   };
 
@@ -102,6 +107,13 @@
       Synth.off(pitch);
       this.onNoteOff(pitch);
     },
+    // release every held pitch — used when a key-up can be missed (focus loss,
+    // song end) so notes never hold/sound with no key actually down
+    releaseAll: function () {
+      var held = Object.keys(this.down);
+      for (var i = 0; i < held.length; i++) this.release(Number(held[i]));
+      Synth.allOff();   // sweep any voices whose key-up was lost
+    },
     initQwerty: function () {
       var self = this;
       window.addEventListener("keydown", function (e) {
@@ -112,6 +124,12 @@
       window.addEventListener("keyup", function (e) {
         var p = QWERTY[e.key.toLowerCase()];
         if (p != null) self.release(p);
+      });
+      // losing focus/visibility can swallow the matching key-up, leaving a note
+      // stuck on — drop everything held when that happens
+      window.addEventListener("blur", function () { self.releaseAll(); });
+      document.addEventListener("visibilitychange", function () {
+        if (document.hidden) self.releaseAll();
       });
     },
     initMIDI: function (statusEl) {
@@ -829,7 +847,7 @@
         if (progressFill) progressFill.style.width = (Engine.progress() * 100).toFixed(1) + "%";
         var mi = Engine.measureInfo();
         if (measureEl) measureEl.textContent = "m. " + mi.current + " / " + mi.total;
-        if (Engine.finished && Engine.running) { Engine.pause(); startBtn.textContent = "Restart"; }
+        if (Engine.finished && Engine.running) { Engine.pause(); Input.releaseAll(); startBtn.textContent = "Restart"; }
       } catch (err) {
         if (window.console) console.error("frame error (recovered):", err);
       }
