@@ -215,6 +215,7 @@
     lowPitch: 48, highPitch: 72, // visible keyboard range (C3..C5 default; widens to song)
     reqNotes: [], missPtr: 0,   // score mode: required notes sorted by start + miss cursor
     score: 0, combo: 0, maxCombo: 0, counts: { perfect: 0, good: 0, miss: 0 }, judgeFx: null,
+    loopEnabled: false, loopStartMeasure: 1, loopEndMeasure: 1, // A-B section practice loop
 
     load: function (song, tempoScale, preserveNow) {
       var pos = preserveNow ? this.now : null;
@@ -312,35 +313,57 @@
       this.reseat();
     },
 
-    // Recompute group/auto-play state for the current playhead (this.now).
+    loopStartSec: function () { return (this.loopStartMeasure - 1) * this.beatsPerMeasure * this.secPerBeat; },
+    loopEndSec: function () { return Math.min(this.songEnd, this.loopEndMeasure * this.beatsPerMeasure * this.secPerBeat); },
+
+    // Recompute group/auto-play/score state for the current playhead. When looping,
+    // pointers never fall before the loop start so out-of-loop notes are ignored.
     reseat: function () {
       this.finished = false;
+      var floor = this.loopEnabled ? Math.max(this.now, this.loopStartSec()) : this.now;
       for (var i = 0; i < this.groups.length; i++) {
         var g = this.groups[i];
         g.hit = {};
-        if (g.start < this.now - 1e-6) { for (var k in g.required) g.hit[k] = 1; g.satisfied = true; }
+        if (g.start < floor - 1e-6) { for (var k in g.required) g.hit[k] = 1; g.satisfied = true; }
         else g.satisfied = false;
       }
       this.gi = this.groups.length;
       for (var j = 0; j < this.groups.length; j++) {
-        if (this.groups[j].start >= this.now - 1e-6) { this.gi = j; break; }
+        if (this.groups[j].start >= floor - 1e-6) { this.gi = j; break; }
       }
       this.autoIdx = this.autoNotes.length;
       for (var a = 0; a < this.autoNotes.length; a++) {
-        if (this.autoNotes[a].start >= this.now - 1e-6) { this.autoIdx = a; break; }
+        if (this.autoNotes[a].start >= floor - 1e-6) { this.autoIdx = a; break; }
       }
-      // score mode: clear judgments and park the miss cursor at the playhead
       this.reqNotes.forEach(function (n) { n.judged = null; });
       this.missPtr = this.reqNotes.length;
       for (var b = 0; b < this.reqNotes.length; b++) {
-        if (this.reqNotes[b].start >= this.now - GOOD_WINDOW) { this.missPtr = b; break; }
+        if (this.reqNotes[b].start >= floor - GOOD_WINDOW) { this.missPtr = b; break; }
       }
     },
 
     reset: function () {
-      this.gi = 0; this.now = -LEAD_SEC; this.finished = false; this.flash = {}; this.autoIdx = 0;
-      this.groups.forEach(function (g) { g.hit = {}; g.satisfied = false; });
-      this.resetScore(); this.missPtr = 0;
+      this.flash = {};
+      this.now = this.loopEnabled ? (this.loopStartSec() - LEAD_SEC) : -LEAD_SEC;
+      this.resetScore();
+      this.reseat();
+    },
+
+    // jump back to the loop start (called when the playhead passes the loop end)
+    loopBack: function () {
+      this.now = this.loopStartSec() - LEAD_SEC;
+      if (this.mode === "score") this.resetScore();
+      this.reseat();
+    },
+
+    setLoop: function (enabled, startM, endM) {
+      this.loopEnabled = enabled;
+      this.loopStartMeasure = Math.max(1, Math.min(this.totalMeasures, startM || 1));
+      this.loopEndMeasure = Math.max(this.loopStartMeasure, Math.min(this.totalMeasures, endM || this.totalMeasures));
+      // if turning loop on while outside the region, snap into it
+      if (enabled && (this.now < this.loopStartSec() - LEAD_SEC || this.now >= this.loopEndSec())) {
+        this.loopBack();
+      }
     },
 
     start: function () { this.running = true; this.lastTs = 0; },
@@ -388,6 +411,7 @@
 
     update: function (dt) {
       if (!this.running || this.finished) return;
+      if (this.loopEnabled && this.now >= this.loopEndSec()) { this.loopBack(); return; }
       if (this.mode === "wait") {
         if (this.gi >= this.groups.length) {
           // no (more) required notes — let the tail (incl. auto-played hand) scroll past
@@ -747,6 +771,7 @@
       if (!preserveNow) { Engine.pause(); startBtn.textContent = "Start"; }
       buildTicks();
       buildHandUI();
+      if (!preserveNow) setLoopDefaults(); else updateLoopBand();
     }
     function rehand() { saveHandCfg(loaded); applyLoaded(true); }
 
@@ -932,6 +957,31 @@
       var rect = progressBar.getBoundingClientRect();
       if (rect.width > 0) Engine.seekToFraction((e.clientX - rect.left) / rect.width);
     });
+
+    // ----- A-B section loop -----
+    var loopChk = document.getElementById("loopChk");
+    var loopFrom = document.getElementById("loopFrom");
+    var loopTo = document.getElementById("loopTo");
+    var loopBand = document.getElementById("loopBand");
+    function updateLoopBand() {
+      if (!Engine.loopEnabled || !Engine.songEnd) { loopBand.hidden = true; return; }
+      var a = Engine.loopStartSec() / Engine.songEnd * 100, b = Engine.loopEndSec() / Engine.songEnd * 100;
+      loopBand.style.left = a + "%"; loopBand.style.width = Math.max(0, b - a) + "%"; loopBand.hidden = false;
+    }
+    function updateLoop() {
+      Engine.setLoop(loopChk.checked, parseInt(loopFrom.value, 10), parseInt(loopTo.value, 10));
+      loopFrom.value = Engine.loopStartMeasure; loopTo.value = Engine.loopEndMeasure;  // reflect clamping
+      updateLoopBand();
+    }
+    function setLoopDefaults() {
+      loopFrom.max = Engine.totalMeasures; loopTo.max = Engine.totalMeasures;
+      loopFrom.value = 1; loopTo.value = Engine.totalMeasures;
+      Engine.setLoop(loopChk.checked, 1, Engine.totalMeasures);
+      updateLoopBand();
+    }
+    loopChk.addEventListener("change", updateLoop);
+    loopFrom.addEventListener("change", updateLoop);
+    loopTo.addEventListener("change", updateLoop);
 
     // settings panel (theme colors) — applied live, persisted to localStorage
     var settingsPanel = document.getElementById("settings");

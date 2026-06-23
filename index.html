@@ -31,6 +31,8 @@
         <span id="tempoVal">80%</span>
       </label>
       <label><input type="checkbox" id="labels" /> Labels</label>
+      <label class="loopctl"><input type="checkbox" id="loopChk" /> Loop</label>
+      <span class="loopctl" id="loopRange">m.<input type="number" id="loopFrom" min="1" />–<input type="number" id="loopTo" min="1" /></span>
       <span class="tag" id="measure">m. 0 / 0</span>
       <button id="restart">Restart</button>
       <button id="start">Start</button>
@@ -38,7 +40,7 @@
     </div>
   </header>
 
-  <div id="progress"><div id="progressFill"></div><div id="ticks"></div></div>
+  <div id="progress"><div id="loopBand" hidden></div><div id="progressFill"></div><div id="ticks"></div></div>
 
   <div id="stageWrap">
     <canvas id="stage"></canvas>
