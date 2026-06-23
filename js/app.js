@@ -5,15 +5,16 @@
   "use strict";
 
   // ---------- constants ----------
-  var LOW = 60, HIGH = 83;               // C4 .. B5 (two octaves)
   var WHITE_SET = { 0:1, 2:1, 4:1, 5:1, 7:1, 9:1, 11:1 }; // semitone classes that are white keys
   var KEYBOARD_H = 150;                  // px reserved at bottom for the drawn keyboard
   var LEAD_SEC = 3.0;                    // how many seconds of song are visible above the hit line
   var NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
-  // QWERTY -> MIDI, home row = white keys from C4
+  // Computer keyboard -> MIDI, classic two-row layout:
+  //   bottom row (Z..M + sharps) = lower octave (C3=48)  → left hand
+  //   top row    (Q..U + numbers) = upper octave (C4=60)  → right hand
   var QWERTY = {
-    a:60, w:61, s:62, e:63, d:64, f:65, t:66, g:67, y:68, h:69, u:70, j:71,
-    k:72, o:73, l:74, p:75, ";":76
+    z:48, s:49, x:50, d:51, c:52, v:53, g:54, b:55, h:56, n:57, j:58, m:59,
+    q:60, "2":61, w:62, "3":63, e:64, r:65, "5":66, t:67, "6":68, y:69, "7":70, u:71, i:72
   };
 
   function midiToFreq(p) { return 440 * Math.pow(2, (p - 69) / 12); }
@@ -155,6 +156,7 @@
     flash: {},                  // pitch -> {until, ok}
     practiceHand: "both",       // "both" | "R" | "L"
     autoNotes: [], autoIdx: 0,  // notes of the non-practiced hand (auto-played + dimmed)
+    lowPitch: 48, highPitch: 72, // visible keyboard range (C3..C5 default; widens to song)
 
     load: function (song, tempoScale, preserveNow) {
       var pos = preserveNow ? this.now : null;
@@ -171,7 +173,14 @@
       this.beatsPerMeasure = song.beatsPerMeasure || 4;
       this.totalBeats = this.secPerBeat ? this.songEnd / this.secPerBeat : 0;
       this.totalMeasures = Math.max(1, Math.ceil(this.totalBeats / this.beatsPerMeasure));
+      // visible keyboard range: union of the song's range with the default C3..C5
+      // (so the computer-key octaves are always shown), padded out to whole octaves.
+      var minP = 48, maxP = 72;
+      this.notes.forEach(function (n) { if (n.pitch < minP) minP = n.pitch; if (n.pitch > maxP) maxP = n.pitch; });
+      this.lowPitch = minP - (minP % 12);                                       // floor to a C
+      this.highPitch = (maxP % 12 === 0) ? maxP : maxP + (12 - (maxP % 12));     // ceil to a C
       this.deriveHands();
+      if (this.ctx) this.layout();                    // rebuild keyboard for the new range
       if (pos !== null) { this.now = pos; this.finished = wasFinished && pos >= this.songEnd; this.reseat(); }
       else this.reset();
     },
@@ -339,7 +348,7 @@
       this.pps = this.hitY / LEAD_SEC;
       // build white-key x map
       var whites = [];
-      for (var p = LOW; p <= HIGH; p++) if (isWhite(p)) whites.push(p);
+      for (var p = this.lowPitch; p <= this.highPitch; p++) if (isWhite(p)) whites.push(p);
       var ww = w / whites.length;
       this.whiteRects = []; this.blackRects = []; this.xByPitch = {};
       for (var i = 0; i < whites.length; i++) {
@@ -350,7 +359,7 @@
       // black keys sit between certain whites
       for (var j = 0; j < whites.length; j++) {
         var wp = whites[j], bp = wp + 1;
-        if (bp <= HIGH && !isWhite(bp)) {
+        if (bp <= this.highPitch && !isWhite(bp)) {
           var bx = (j + 1) * ww - ww * 0.3;
           this.blackRects.push({ pitch: bp, x: bx, w: ww * 0.6 });
           this.xByPitch[bp] = { cx: bx + ww * 0.3, w: ww * 0.5, white: false };
