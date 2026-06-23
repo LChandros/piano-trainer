@@ -14,11 +14,15 @@
       <label>Song
         <select id="song"></select>
       </label>
-      <label id="trackWrap" style="display:none">Track
-        <select id="track"></select>
-      </label>
       <button id="upload">⬆ Upload MIDI</button>
       <input id="file" type="file" accept=".mid,.midi" style="display:none" />
+      <label>Hands
+        <select id="hand">
+          <option value="both">Both</option>
+          <option value="R">Right</option>
+          <option value="L">Left</option>
+        </select>
+      </label>
       <label>Mode
         <select id="mode">
           <option value="wait">Notes (wait)</option>
@@ -49,6 +53,8 @@
       <label class="crow">Label highlight <input type="color" data-theme="labelBg" /></label>
       <label class="crow">Label text <input type="color" data-theme="labelText" /></label>
       <button id="resetTheme">Reset to defaults</button>
+      <h3 style="margin-top:14px">Hands</h3>
+      <div id="handsBox"></div>
     </div>
   </div>
 

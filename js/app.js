@@ -66,6 +66,20 @@
         v.osc.stop(t + (immediate ? 0.03 : 0.2));
       } catch (e) {}
       delete this.voices[pitch];
+    },
+    // fire-and-forget note for auto-played (other-hand) notes; softer sine, self-stopping
+    play: function (pitch, dur) {
+      var ctx = this.ensure(); if (!ctx) return;
+      var osc = ctx.createOscillator(), g = ctx.createGain(), t = ctx.currentTime;
+      var end = t + Math.min(4, Math.max(0.2, dur));
+      osc.type = "sine";
+      osc.frequency.value = midiToFreq(pitch);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.15, t + 0.01);
+      g.gain.setValueAtTime(0.15, Math.max(t + 0.02, end - 0.06));
+      g.gain.exponentialRampToValueAtTime(0.0001, end);
+      osc.connect(g); g.connect(ctx.destination);
+      osc.start(t); osc.stop(end + 0.03);
     }
   };
 
@@ -139,29 +153,51 @@
     now: 0, lastTs: 0, wallNow: 0, running: false, mode: "wait", finished: false,
     whiteRects: [], blackRects: [],
     flash: {},                  // pitch -> {until, ok}
+    practiceHand: "both",       // "both" | "R" | "L"
+    autoNotes: [], autoIdx: 0,  // notes of the non-practiced hand (auto-played + dimmed)
 
-    load: function (song, tempoScale) {
+    load: function (song, tempoScale, preserveNow) {
+      var pos = preserveNow ? this.now : null;
+      var wasFinished = this.finished;
       this.song = song;
       this.secPerBeat = (60 / song.bpm) / (tempoScale || 1);
       var self = this;
+      // notes carry a hand ("R"/"L"); times converted beats -> seconds
       this.notes = song.notes.map(function (n) {
-        return { pitch: n.pitch, start: n.start * self.secPerBeat, dur: n.dur * self.secPerBeat };
-      });
-      // group simultaneous notes (chords) by start time
+        return { pitch: n.pitch, start: n.start * self.secPerBeat, dur: n.dur * self.secPerBeat, hand: n.hand || "R", key: n.key };
+      }).sort(function (a, b) { return a.start - b.start; });
+      var last = this.notes[this.notes.length - 1];
+      this.songEnd = last ? last.start + last.dur : 0;
+      this.beatsPerMeasure = song.beatsPerMeasure || 4;
+      this.totalBeats = this.secPerBeat ? this.songEnd / this.secPerBeat : 0;
+      this.totalMeasures = Math.max(1, Math.ceil(this.totalBeats / this.beatsPerMeasure));
+      this.deriveHands();
+      if (pos !== null) { this.now = pos; this.finished = wasFinished && pos >= this.songEnd; this.reseat(); }
+      else this.reset();
+    },
+
+    // Recompute which notes are required (gated) vs auto-played, based on practiceHand.
+    deriveHands: function () {
+      var ph = this.practiceHand;
+      this.notes.forEach(function (n) { n.req = (ph === "both") || (n.hand === ph); });
       var byStart = {};
       this.notes.forEach(function (n) {
+        if (!n.req) return;
         var k = n.start.toFixed(3);
         (byStart[k] = byStart[k] || { start: n.start, required: {}, hit: {}, count: 0 });
         if (!byStart[k].required[n.pitch]) { byStart[k].required[n.pitch] = 1; byStart[k].count++; }
       });
       this.groups = Object.keys(byStart).map(function (k) { return byStart[k]; })
         .sort(function (a, b) { return a.start - b.start; });
-      var last = this.notes[this.notes.length - 1];
-      this.songEnd = last ? last.start + last.dur : 0;
-      this.beatsPerMeasure = song.beatsPerMeasure || 4;
-      this.totalBeats = this.secPerBeat ? this.songEnd / this.secPerBeat : 0;
-      this.totalMeasures = Math.max(1, Math.ceil(this.totalBeats / this.beatsPerMeasure));
-      this.reset();
+      this.autoNotes = this.notes.filter(function (n) { return !n.req; })
+        .sort(function (a, b) { return a.start - b.start; });
+    },
+
+    setPracticeHand: function (h) {
+      this.practiceHand = h;
+      var pos = this.now;
+      this.deriveHands();
+      this.now = pos; this.reseat();
     },
 
     measureInfo: function () {
@@ -196,8 +232,12 @@
       frac = Math.max(0, Math.min(1, frac));
       var measure = Math.min(this.totalMeasures - 1, Math.floor(frac * this.totalMeasures));
       this.now = measure * this.beatsPerMeasure * this.secPerBeat;
+      this.reseat();
+    },
+
+    // Recompute group/auto-play state for the current playhead (this.now).
+    reseat: function () {
       this.finished = false;
-      // mark groups before the playhead as already done, clear the rest
       for (var i = 0; i < this.groups.length; i++) {
         var g = this.groups[i];
         g.hit = {};
@@ -208,10 +248,14 @@
       for (var j = 0; j < this.groups.length; j++) {
         if (this.groups[j].start >= this.now - 1e-6) { this.gi = j; break; }
       }
+      this.autoIdx = this.autoNotes.length;
+      for (var a = 0; a < this.autoNotes.length; a++) {
+        if (this.autoNotes[a].start >= this.now - 1e-6) { this.autoIdx = a; break; }
+      }
     },
 
     reset: function () {
-      this.gi = 0; this.now = -LEAD_SEC; this.finished = false; this.flash = {};
+      this.gi = 0; this.now = -LEAD_SEC; this.finished = false; this.flash = {}; this.autoIdx = 0;
       this.groups.forEach(function (g) { g.hit = {}; g.satisfied = false; });
     },
 
@@ -240,9 +284,10 @@
     update: function (dt) {
       if (!this.running || this.finished) return;
       if (this.gi >= this.groups.length) {
-        // let the tail scroll past, then finish
+        // no (more) required notes — let the tail (incl. auto-played hand) scroll past
         this.now += dt;
-        if (this.now > this.notes[this.notes.length - 1].start + 1.5) this.finished = true;
+        this.playAuto();
+        if (this.now > this.songEnd + 1.0) this.finished = true;
         return;
       }
       if (this.mode === "wait") {
@@ -257,6 +302,29 @@
         this.now += dt;
         while (this.gi < this.groups.length && this.groups[this.gi].start < this.now - 0.05) this.gi++;
       }
+      this.playAuto();
+    },
+
+    // auto-play notes of the non-practiced hand as the clock passes them
+    playAuto: function () {
+      while (this.autoIdx < this.autoNotes.length && this.autoNotes[this.autoIdx].start <= this.now) {
+        var an = this.autoNotes[this.autoIdx++];
+        Synth.play(an.pitch, Math.max(0.18, an.dur));
+      }
+    },
+
+    // find a falling note under canvas coords (for click-to-reassign-hand)
+    noteAt: function (px, py) {
+      if (py >= this.hitY) return null;
+      for (var i = this.notes.length - 1; i >= 0; i--) {
+        var note = this.notes[i], pos = this.xByPitch[note.pitch];
+        if (!pos) continue;
+        var bottomY = this.hitY - (note.start - this.now) * this.pps;
+        var topY = bottomY - note.dur * this.pps;
+        if (py < topY || py > bottomY) continue;
+        if (px >= pos.cx - pos.w / 2 && px <= pos.cx + pos.w / 2) return note;
+      }
+      return null;
     },
 
     layout: function () {
@@ -312,10 +380,13 @@
         var w = pos.w, x = pos.cx - w / 2;
         var atLine = bottomY >= hitY - 4 && topY <= hitY + 4;
         if (clampedBottom <= topY) continue;
-        ctx.fillStyle = atLine ? theme.hitNote : (pos.white ? theme.whiteNote : theme.blackNote);
+        var dim = !note.req;   // other-hand notes are dimmed (still auto-played)
+        ctx.globalAlpha = dim ? 0.32 : 1;
+        ctx.fillStyle = dim ? "#9aa6b8" : (atLine ? theme.hitNote : (pos.white ? theme.whiteNote : theme.blackNote));
         roundRect(ctx, x, topY, w, clampedBottom - topY, 5);
         ctx.fill();
-        if (this.showLabels && (clampedBottom - topY) > 20) {
+        ctx.globalAlpha = 1;
+        if (!dim && this.showLabels && (clampedBottom - topY) > 20) {
           var lbl = noteLabel(note.pitch);
           var midY = (topY + clampedBottom) / 2;
           ctx.font = "800 15px system-ui, sans-serif";
@@ -421,12 +492,18 @@
     Input.initQwerty();
     Input.initMIDI(document.getElementById("midiStatus"));
 
-    // on-screen piano via pointer
+    // on-screen piano via pointer; clicking a falling note flips its hand
     var activePointer = {};
     canvas.addEventListener("pointerdown", function (e) {
       Synth.ensure();
       var rect = canvas.getBoundingClientRect();
-      var p = Engine.keyAt(e.clientX - rect.left, e.clientY - rect.top);
+      var cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+      if (cy < Engine.hitY) {
+        var n = Engine.noteAt(cx, cy);
+        if (n && n.key && loaded) { loaded.overrides[n.key] = (n.hand === "R") ? "L" : "R"; rehand(); }
+        return;
+      }
+      var p = Engine.keyAt(cx, cy);
       if (p != null) { activePointer[e.pointerId] = p; Input.press(p, 100); canvas.setPointerCapture(e.pointerId); }
     });
     function lift(e) {
@@ -438,10 +515,9 @@
 
     // controls
     var songSel = document.getElementById("song");
-    var trackSel = document.getElementById("track");
-    var trackWrap = document.getElementById("trackWrap");
     var uploadBtn = document.getElementById("upload");
     var fileInput = document.getElementById("file");
+    var handSel = document.getElementById("hand");
     var modeSel = document.getElementById("mode");
     var tempo = document.getElementById("tempo");
     var tempoVal = document.getElementById("tempoVal");
@@ -449,9 +525,10 @@
     var labelsChk = document.getElementById("labels");
     var ticksEl = document.getElementById("ticks");
     var measureEl = document.getElementById("measure");
+    var handsBox = document.getElementById("handsBox");
 
-    var currentSong = null;     // resolved {name, bpm, beatsPerMeasure, notes}
-    var parsedMIDI = null;      // last parsed uploaded file (for track switching)
+    var loaded = null;          // full song + hand config { name, displayName, bpm, beatsPerMeasure, tracks, multiTrack, trackHand[], splitPitch, overrides }
+    var currentSong = null;     // composed song handed to the engine
 
     function buildTicks() {
       ticksEl.innerHTML = "";
@@ -463,14 +540,84 @@
       }
     }
 
-    function loadCurrent() {
-      if (!currentSong) return;
-      Engine.load(currentSong, parseFloat(tempo.value));
+    // ----- hand assignment -----
+    function median(a) { var s = a.slice().sort(function (x, y) { return x - y; }); var m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+    function autoAssignHands(tracks) {
+      if (tracks.length <= 1) return ["R"];
+      var avg = tracks.map(function (t) { var s = 0; t.notes.forEach(function (n) { s += n.pitch; }); return s / Math.max(1, t.notes.length); });
+      var med = median(avg);
+      return tracks.map(function (t, i) {
+        var nm = (t.name || "").toLowerCase();
+        if (/left|lh|l\.h|bass/.test(nm)) return "L";
+        if (/right|rh|r\.h|treble|melody|lead/.test(nm)) return "R";
+        return avg[i] >= med ? "R" : "L";
+      });
+    }
+    function composeNotes(L) {
+      var out = [];
+      L.tracks.forEach(function (tr, ti) {
+        tr.notes.forEach(function (n) {
+          var base = L.multiTrack ? L.trackHand[ti] : (n.pitch >= L.splitPitch ? "R" : "L");
+          var key = ti + ":" + n.pitch + "@" + n.start.toFixed(4);
+          out.push({ pitch: n.pitch, start: n.start, dur: n.dur, hand: (L.overrides[key] || base), key: key });
+        });
+      });
+      return out;
+    }
+    function cfgKey(n) { return "pt-hands:" + n; }
+    function loadHandCfg(L) {
+      try {
+        var s = JSON.parse(localStorage.getItem(cfgKey(L.name)));
+        if (s) {
+          if (s.trackHand && s.trackHand.length === L.tracks.length) L.trackHand = s.trackHand;
+          if (typeof s.splitPitch === "number") L.splitPitch = s.splitPitch;
+          if (s.overrides) L.overrides = s.overrides;
+        }
+      } catch (e) {}
+    }
+    function saveHandCfg(L) {
+      try { localStorage.setItem(cfgKey(L.name), JSON.stringify({ trackHand: L.trackHand, splitPitch: L.splitPitch, overrides: L.overrides })); } catch (e) {}
+    }
+
+    function applyLoaded(preserveNow) {
+      currentSong = { name: loaded.displayName, bpm: loaded.bpm, beatsPerMeasure: loaded.beatsPerMeasure, notes: composeNotes(loaded) };
+      Engine.practiceHand = handSel.value;
+      Engine.load(currentSong, parseFloat(tempo.value), !!preserveNow);
       Engine.setMode(modeSel.value);
       Engine.showLabels = labelsChk.checked;
-      Engine.pause();
-      startBtn.textContent = "Start";
+      if (!preserveNow) { Engine.pause(); startBtn.textContent = "Start"; }
       buildTicks();
+      buildHandUI();
+    }
+    function rehand() { saveHandCfg(loaded); applyLoaded(true); }
+
+    function buildHandUI() {
+      handsBox.innerHTML = "";
+      if (!loaded) return;
+      if (loaded.multiTrack) {
+        loaded.tracks.forEach(function (tr, ti) {
+          var row = document.createElement("label"); row.className = "crow";
+          var s = document.createElement("span"); s.textContent = (tr.name || ("Track " + (ti + 1))) + " (" + tr.notes.length + ")";
+          var sel = document.createElement("select");
+          [["R", "Right"], ["L", "Left"]].forEach(function (o) { var op = document.createElement("option"); op.value = o[0]; op.textContent = o[1]; sel.appendChild(op); });
+          sel.value = loaded.trackHand[ti];
+          sel.addEventListener("change", function () { loaded.trackHand[ti] = sel.value; rehand(); });
+          row.appendChild(s); row.appendChild(sel); handsBox.appendChild(row);
+        });
+      } else {
+        var row = document.createElement("label"); row.className = "crow";
+        var s = document.createElement("span"); s.textContent = "Split point";
+        var sel = document.createElement("select");
+        for (var p = 48; p <= 84; p++) { var op = document.createElement("option"); op.value = p; op.textContent = noteLabel(p) + (p === 60 ? " (mid C)" : ""); sel.appendChild(op); }
+        sel.value = loaded.splitPitch;
+        sel.addEventListener("change", function () { loaded.splitPitch = parseInt(sel.value, 10); rehand(); });
+        row.appendChild(s); row.appendChild(sel); handsBox.appendChild(row);
+      }
+      var tip = document.createElement("div"); tip.className = "hint-line"; tip.textContent = "Tip: click a falling note to flip its hand.";
+      handsBox.appendChild(tip);
+      var rb = document.createElement("button"); rb.textContent = "Reset hand fixes"; rb.className = "wide";
+      rb.addEventListener("click", function () { loaded.overrides = {}; loaded.trackHand = autoAssignHands(loaded.tracks); loaded.splitPitch = 60; saveHandCfg(loaded); applyLoaded(true); });
+      handsBox.appendChild(rb);
     }
 
     function populateSongs(files, selectValue) {
@@ -494,40 +641,26 @@
       }).catch(function () { selectSong(); });
     }
 
-    function buildSongFromTrack(fname) {
-      var i = parseInt(trackSel.value, 10) || 0;
-      var tr = parsedMIDI.tracks[i] || parsedMIDI.tracks[0];
-      currentSong = { name: fname, bpm: parsedMIDI.bpm, beatsPerMeasure: parsedMIDI.beatsPerMeasure, notes: tr.notes };
-    }
-
     function selectSong() {
       var v = songSel.value || "";
       if (v.indexOf("builtin:") === 0) {
-        parsedMIDI = null; trackWrap.style.display = "none";
-        currentSong = window.SONGS[v.slice(8)];
-        loadCurrent();
+        var s = window.SONGS[v.slice(8)];
+        loaded = { name: v, displayName: s.name, bpm: s.bpm, beatsPerMeasure: s.beatsPerMeasure,
+          tracks: [{ name: s.name, notes: s.notes }], multiTrack: false, trackHand: ["R"], splitPitch: 60, overrides: {} };
+        loadHandCfg(loaded); applyLoaded(false);
       } else if (v.indexOf("file:") === 0) {
         var fname = v.slice(5);
         fetch("/songs/" + encodeURIComponent(fname)).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
-          parsedMIDI = window.parseMIDI(new Uint8Array(buf));
-          trackSel.innerHTML = "";
-          parsedMIDI.tracks.forEach(function (tr, i) {
-            var o = document.createElement("option");
-            o.value = i; o.textContent = (tr.name || ("Track " + (i + 1))) + " · " + tr.notes.length + " notes";
-            trackSel.appendChild(o);
-          });
-          trackSel.value = parsedMIDI.defaultTrack;
-          trackWrap.style.display = parsedMIDI.tracks.length > 1 ? "" : "none";
-          buildSongFromTrack(fname);
-          loadCurrent();
+          var parsed = window.parseMIDI(new Uint8Array(buf));
+          loaded = { name: v, displayName: fname.replace(/\.midi?$/i, ""), bpm: parsed.bpm, beatsPerMeasure: parsed.beatsPerMeasure,
+            tracks: parsed.tracks, multiTrack: parsed.tracks.length > 1, trackHand: autoAssignHands(parsed.tracks), splitPitch: 60, overrides: {} };
+          loadHandCfg(loaded); applyLoaded(false);
         }).catch(function (e) { alert("Could not read that MIDI file: " + (e && e.message || e)); });
       }
     }
 
     songSel.addEventListener("change", selectSong);
-    trackSel.addEventListener("change", function () {
-      if (parsedMIDI) { buildSongFromTrack(songSel.value.slice(5)); loadCurrent(); }
-    });
+    handSel.addEventListener("change", function () { Engine.setPracticeHand(handSel.value); });
     uploadBtn.addEventListener("click", function () { fileInput.click(); });
     fileInput.addEventListener("change", function () {
       var f = fileInput.files[0]; if (!f) return;
