@@ -5,6 +5,9 @@
 songs/*.mid
 songs/*.midi
 
+# runtime data (saved hand configs, etc.)
+data/
+
 # misc
 node_modules/
 .DS_Store

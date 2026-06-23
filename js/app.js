@@ -565,18 +565,28 @@
       return out;
     }
     function cfgKey(n) { return "pt-hands:" + n; }
-    function loadHandCfg(L) {
-      try {
-        var s = JSON.parse(localStorage.getItem(cfgKey(L.name)));
-        if (s) {
-          if (s.trackHand && s.trackHand.length === L.tracks.length) L.trackHand = s.trackHand;
-          if (typeof s.splitPitch === "number") L.splitPitch = s.splitPitch;
-          if (s.overrides) L.overrides = s.overrides;
-        }
-      } catch (e) {}
+    function applyCfgTo(L, s) {
+      if (!s) return false;
+      if (s.trackHand && s.trackHand.length === L.tracks.length) L.trackHand = s.trackHand;
+      if (typeof s.splitPitch === "number") L.splitPitch = s.splitPitch;
+      if (s.overrides) L.overrides = s.overrides;
+      return true;
+    }
+    function loadHandCfgLocal(L) {
+      try { applyCfgTo(L, JSON.parse(localStorage.getItem(cfgKey(L.name)))); } catch (e) {}
+    }
+    // server is source of truth; fall back to (and migrate from) localStorage when offline/empty
+    function fetchHandCfg(L) {
+      return fetch("/api/hands?name=" + encodeURIComponent(L.name))
+        .then(function (r) { return r.json(); })
+        .then(function (d) { if (!(d && d.config && applyCfgTo(L, d.config))) loadHandCfgLocal(L); })
+        .catch(function () { loadHandCfgLocal(L); });
     }
     function saveHandCfg(L) {
-      try { localStorage.setItem(cfgKey(L.name), JSON.stringify({ trackHand: L.trackHand, splitPitch: L.splitPitch, overrides: L.overrides })); } catch (e) {}
+      var cfg = { trackHand: L.trackHand, splitPitch: L.splitPitch, overrides: L.overrides };
+      try { localStorage.setItem(cfgKey(L.name), JSON.stringify(cfg)); } catch (e) {}
+      fetch("/api/hands?name=" + encodeURIComponent(L.name),
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cfg) }).catch(function () {});
     }
 
     function applyLoaded(preserveNow) {
@@ -647,14 +657,14 @@
         var s = window.SONGS[v.slice(8)];
         loaded = { name: v, displayName: s.name, bpm: s.bpm, beatsPerMeasure: s.beatsPerMeasure,
           tracks: [{ name: s.name, notes: s.notes }], multiTrack: false, trackHand: ["R"], splitPitch: 60, overrides: {} };
-        loadHandCfg(loaded); applyLoaded(false);
+        fetchHandCfg(loaded).then(function () { applyLoaded(false); });
       } else if (v.indexOf("file:") === 0) {
         var fname = v.slice(5);
         fetch("/songs/" + encodeURIComponent(fname)).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
           var parsed = window.parseMIDI(new Uint8Array(buf));
           loaded = { name: v, displayName: fname.replace(/\.midi?$/i, ""), bpm: parsed.bpm, beatsPerMeasure: parsed.beatsPerMeasure,
             tracks: parsed.tracks, multiTrack: parsed.tracks.length > 1, trackHand: autoAssignHands(parsed.tracks), splitPitch: 60, overrides: {} };
-          loadHandCfg(loaded); applyLoaded(false);
+          return fetchHandCfg(loaded).then(function () { applyLoaded(false); });
         }).catch(function (e) { alert("Could not read that MIDI file: " + (e && e.message || e)); });
       }
     }

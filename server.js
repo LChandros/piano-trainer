@@ -7,9 +7,15 @@ const path = require("path");
 
 const ROOT = __dirname;
 const SONGS_DIR = path.join(ROOT, "songs");
+const DATA_DIR = path.join(ROOT, "data");
+const HANDS_FILE = path.join(DATA_DIR, "hand-configs.json");
 const PORT = process.env.PORT || 3022;
 const MAX_UPLOAD = 8 * 1024 * 1024; // 8 MB
 fs.mkdirSync(SONGS_DIR, { recursive: true });
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+function readHands() { try { return JSON.parse(fs.readFileSync(HANDS_FILE, "utf8")); } catch (e) { return {}; } }
+function writeHands(m) { try { fs.writeFileSync(HANDS_FILE, JSON.stringify(m, null, 2)); return true; } catch (e) { return false; } }
 
 const MIME = {
   ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "application/javascript",
@@ -46,6 +52,32 @@ const server = http.createServer(function (req, res) {
       if (aborted) return;
       try { fs.writeFileSync(path.join(SONGS_DIR, name), Buffer.concat(chunks)); json(res, 200, { ok: true, name: name }); }
       catch (e) { json(res, 500, { error: "write failed" }); }
+    });
+    return;
+  }
+
+  // --- get a song's saved hand config ---
+  if (p === "/api/hands" && req.method === "GET") {
+    const all = readHands();
+    return json(res, 200, { config: all[url.searchParams.get("name") || ""] || null });
+  }
+
+  // --- save a song's hand config ---
+  if (p === "/api/hands" && req.method === "POST") {
+    const name = url.searchParams.get("name") || "";
+    if (!name) return json(res, 400, { error: "missing name" });
+    const chunks = []; let size = 0, aborted = false;
+    req.on("data", function (c) {
+      size += c.length;
+      if (size > 1024 * 1024) { aborted = true; json(res, 413, { error: "config too large" }); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on("end", function () {
+      if (aborted) return;
+      let cfg;
+      try { cfg = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch (e) { return json(res, 400, { error: "bad json" }); }
+      const all = readHands(); all[name] = cfg;
+      if (writeHands(all)) json(res, 200, { ok: true }); else json(res, 500, { error: "write failed" });
     });
     return;
   }
