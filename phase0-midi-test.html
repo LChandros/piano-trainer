@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Phase 0 — MIDI Gate Test</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #0b0d12; color: #e7ecf3;
+    font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; }
+  body { display: flex; flex-direction: column; padding: 16px; gap: 12px; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 20px; margin: 0; font-weight: 650; }
+  .sub { color: #8a93a3; font-size: 13px; }
+  #verdict { font-size: 22px; font-weight: 800; padding: 14px 18px; border-radius: 14px;
+    text-align: center; letter-spacing: .3px; transition: background .2s, color .2s; }
+  .neutral { background: #1a1f2b; color: #9aa6b8; }
+  .pass    { background: #10391f; color: #56e08a; }
+  .fail    { background: #3a1414; color: #ff7a7a; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .card { background: #11151d; border: 1px solid #1e2533; border-radius: 14px; padding: 14px 16px; flex: 1 1 240px; }
+  .card h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: #6f7a8c; }
+  #devices { font-size: 15px; line-height: 1.5; }
+  #devices .none { color: #8a93a3; }
+  #devices .dev { color: #7fd1ff; }
+  #bignote { font-size: 64px; font-weight: 800; text-align: center; min-height: 84px;
+    display: flex; align-items: center; justify-content: center; color: #56e08a; }
+  #bignote .idle { font-size: 18px; font-weight: 500; color: #6f7a8c; }
+  #stats { display: flex; gap: 18px; font-size: 14px; color: #9aa6b8; flex-wrap: wrap; }
+  #stats b { color: #e7ecf3; font-weight: 700; }
+  #log { flex: 1 1 auto; min-height: 120px; background: #0e1219; border: 1px solid #1e2533;
+    border-radius: 14px; padding: 10px 12px; overflow-y: auto; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px; line-height: 1.55; }
+  #log .on  { color: #56e08a; }
+  #log .off { color: #6f7a8c; }
+  #log .cc  { color: #d6a4ff; }
+  #log .sys { color: #ffce6b; }
+  button { background: #1e2533; color: #e7ecf3; border: 1px solid #2c3648; border-radius: 10px;
+    padding: 10px 16px; font-size: 14px; font-weight: 600; }
+  button:active { background: #2c3648; }
+  .pill { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: #1a1f2b; color: #9aa6b8; }
+  .pill.ok { background: #10391f; color: #56e08a; }
+  .pill.bad { background: #3a1414; color: #ff7a7a; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Phase 0 · MIDI Gate Test</h1>
+    <span class="sub">Plug in the Yamaha, then play any key. If notes appear below, the platform passes.</span>
+  </header>
+
+  <div id="verdict" class="neutral">Initializing…</div>
+
+  <div class="row">
+    <div class="card" style="flex: 2 1 260px;">
+      <h2>Last note played</h2>
+      <div id="bignote"><span class="idle">waiting for a note…</span></div>
+    </div>
+    <div class="card">
+      <h2>Connected MIDI inputs</h2>
+      <div id="devices"><span class="none">none yet</span></div>
+    </div>
+  </div>
+
+  <div class="card" style="flex: 0 0 auto;">
+    <div id="stats">
+      <span>Secure context: <span id="secure" class="pill">?</span></span>
+      <span>Web MIDI API: <span id="api" class="pill">?</span></span>
+      <span>Notes received: <b id="count">0</b></span>
+      <span>Inputs: <b id="ninputs">0</b></span>
+    </div>
+  </div>
+
+  <div id="log"></div>
+
+  <div class="row" style="flex: 0 0 auto;">
+    <button id="retry">Re-scan devices</button>
+    <button id="clear">Clear log</button>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+  var NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  var verdict = document.getElementById("verdict");
+  var devicesEl = document.getElementById("devices");
+  var bignote = document.getElementById("bignote");
+  var logEl = document.getElementById("log");
+  var countEl = document.getElementById("count");
+  var ninputsEl = document.getElementById("ninputs");
+  var secureEl = document.getElementById("secure");
+  var apiEl = document.getElementById("api");
+  var noteCount = 0;
+  var midi = null;
+  var heldInputs = {};
+
+  function noteName(n) { return NOTE_NAMES[n % 12] + (Math.floor(n / 12) - 1); }
+  function ts() {
+    var d = new Date();
+    function p(x){ return (x < 10 ? "0" : "") + x; }
+    return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+  function log(cls, msg) {
+    var line = document.createElement("div");
+    line.className = cls;
+    line.textContent = "[" + ts() + "] " + msg;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+    while (logEl.childNodes.length > 400) logEl.removeChild(logEl.firstChild);
+  }
+  function setVerdict(state, text) { verdict.className = state; verdict.textContent = text; }
+  function pill(el, ok, text) { el.className = "pill " + (ok ? "ok" : "bad"); el.textContent = text; }
+
+  // 1. Environment checks — these are the actual gate.
+  var secure = (typeof isSecureContext !== "undefined") ? isSecureContext : (location.protocol === "https:" || location.hostname === "localhost");
+  pill(secureEl, secure, secure ? "yes" : "NO — needs https/localhost");
+
+  if (!navigator.requestMIDIAccess) {
+    pill(apiEl, false, "NOT SUPPORTED");
+    setVerdict("fail", "✗ This browser has no Web MIDI API. This platform will NOT work — try a different host.");
+    log("sys", "navigator.requestMIDIAccess is undefined. Web MIDI is unavailable here.");
+    if (!secure) log("sys", "Note: not a secure context. Serve over https:// or localhost and retry before giving up.");
+    return;
+  }
+  pill(apiEl, true, "present");
+  setVerdict("neutral", "Web MIDI present — requesting access…");
+
+  function describeInputs() {
+    devicesEl.innerHTML = "";
+    var count = 0;
+    midi.inputs.forEach(function (input) {
+      count++;
+      var d = document.createElement("div");
+      d.className = "dev";
+      d.textContent = "▸ " + (input.name || "Unnamed") + (input.manufacturer ? " (" + input.manufacturer + ")" : "");
+      devicesEl.appendChild(d);
+    });
+    ninputsEl.textContent = count;
+    if (count === 0) {
+      devicesEl.innerHTML = '<span class="none">none detected — plug in the keyboard, power it on, then tap “Re-scan”.</span>';
+      if (verdict.className !== "pass") setVerdict("neutral", "Web MIDI works, but no input detected yet. Connect the Yamaha.");
+    } else if (verdict.className !== "pass") {
+      setVerdict("neutral", "Device seen ✓ — now play a key to confirm note data flows.");
+    }
+    return count;
+  }
+
+  function onMIDIMessage(e) {
+    var data = e.data;
+    var status = data[0] & 0xf0;
+    var ch = (data[0] & 0x0f) + 1;
+    if (status === 0x90 && data[2] > 0) {            // note on
+      noteCount++; countEl.textContent = noteCount;
+      var name = noteName(data[1]);
+      bignote.innerHTML = name + ' <span style="font-size:24px;color:#6f7a8c">vel ' + data[2] + "</span>";
+      log("on", "NOTE ON  " + name + " (#" + data[1] + ")  vel " + data[2] + "  ch" + ch);
+      if (verdict.className !== "pass") {
+        setVerdict("pass", "✓ PASS — keyboard notes are reaching the browser. This platform works!");
+      }
+    } else if (status === 0x80 || (status === 0x90 && data[2] === 0)) {  // note off
+      log("off", "note off " + noteName(data[1]) + " (#" + data[1] + ")  ch" + ch);
+    } else if (status === 0xb0) {                    // control change (sustain pedal etc.)
+      log("cc", "CC " + data[1] + " = " + data[2] + "  ch" + ch + (data[1] === 64 ? "  (sustain)" : ""));
+    }
+  }
+
+  function attachInputs() {
+    midi.inputs.forEach(function (input) {
+      if (!heldInputs[input.id]) {
+        heldInputs[input.id] = input;
+        input.onmidimessage = onMIDIMessage;
+      }
+    });
+  }
+
+  navigator.requestMIDIAccess({ sysex: false }).then(function (access) {
+    midi = access;
+    log("sys", "MIDI access granted.");
+    attachInputs();
+    describeInputs();
+    access.onstatechange = function (e) {
+      log("sys", "state change: " + e.port.type + " “" + (e.port.name || "?") + "” → " + e.port.state + "/" + e.port.connection);
+      attachInputs();
+      describeInputs();
+    };
+  }, function (err) {
+    setVerdict("fail", "✗ MIDI access denied: " + err + " — this platform will not work as-is.");
+    log("sys", "requestMIDIAccess rejected: " + err);
+  });
+
+  document.getElementById("retry").onclick = function () {
+    if (midi) { attachInputs(); describeInputs(); log("sys", "rescanned."); }
+  };
+  document.getElementById("clear").onclick = function () { logEl.innerHTML = ""; };
+})();
+</script>
+</body>
+</html>

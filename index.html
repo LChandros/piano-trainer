@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Piano Trainer — Phase 1</title>
+<link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>🎹 Piano Trainer</h1>
+    <span class="tag">Phase 1 · Mode 1 (wait)</span>
+    <div class="controls">
+      <label>Song
+        <select id="song"></select>
+      </label>
+      <label id="trackWrap" style="display:none">Track
+        <select id="track"></select>
+      </label>
+      <button id="upload">⬆ Upload MIDI</button>
+      <input id="file" type="file" accept=".mid,.midi" style="display:none" />
+      <label>Mode
+        <select id="mode">
+          <option value="wait">Notes (wait)</option>
+          <option value="free">Rhythm (preview)</option>
+        </select>
+      </label>
+      <label>Tempo
+        <input id="tempo" type="range" min="0.4" max="1.2" step="0.05" value="0.8" />
+        <span id="tempoVal">80%</span>
+      </label>
+      <label><input type="checkbox" id="labels" /> Labels</label>
+      <span class="tag" id="measure">m. 0 / 0</span>
+      <button id="restart">Restart</button>
+      <button id="start">Start</button>
+    </div>
+  </header>
+
+  <div id="progress"><div id="progressFill"></div><div id="ticks"></div></div>
+
+  <div id="stageWrap">
+    <canvas id="stage"></canvas>
+  </div>
+
+  <footer>
+    <span id="midiStatus" class="midi-status">Live MIDI: checking…</span>
+    <span class="hint">Play with the on-screen keys, your live MIDI keyboard, or computer keys
+      <kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd><kbd>G</kbd><kbd>H</kbd><kbd>J</kbd><kbd>K</kbd> (white) ·
+      <kbd>W</kbd><kbd>E</kbd><kbd>T</kbd><kbd>Y</kbd><kbd>U</kbd> (black)</span>
+  </footer>
+
+  <script src="js/songs.js"></script>
+  <script src="js/midi-parser.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

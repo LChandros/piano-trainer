@@ -1,0 +1,10 @@
+# logs
+*.log
+
+# user-uploaded songs (runtime data, not source)
+songs/*.mid
+songs/*.midi
+
+# misc
+node_modules/
+.DS_Store
