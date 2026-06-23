@@ -47,11 +47,13 @@
     <canvas id="stage"></canvas>
     <div id="settings" class="panel" hidden>
       <h3>Appearance</h3>
+      <label class="crow">Color scheme <select id="scheme"></select></label>
       <label class="crow">White-key notes <input type="color" data-theme="whiteNote" /></label>
       <label class="crow">Black-key notes <input type="color" data-theme="blackNote" /></label>
       <label class="crow">Note at hit line <input type="color" data-theme="hitNote" /></label>
       <label class="crow">Label highlight <input type="color" data-theme="labelBg" /></label>
       <label class="crow">Label text <input type="color" data-theme="labelText" /></label>
+      <button id="setDefaultTheme" class="wide">Set current as default</button>
       <button id="resetTheme">Reset to defaults</button>
       <h3 style="margin-top:14px">Hands</h3>
       <div id="handsBox"></div>
