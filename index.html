@@ -9,12 +9,9 @@
 <body>
   <header>
     <h1>🎹 Piano Trainer</h1>
-    <span class="tag">Phase 1 · Mode 1 (wait)</span>
     <div class="controls">
-      <label>Song
-        <select id="song"></select>
-      </label>
-      <button id="upload">⬆ Upload MIDI</button>
+      <button id="openLibrary" title="Song library">🎵 <span id="currentSongName">Songs</span> ▾</button>
+      <select id="song" hidden></select>
       <input id="file" type="file" accept=".mid,.midi" style="display:none" />
       <label>Hands
         <select id="hand">
@@ -56,6 +53,16 @@
       <h3 style="margin-top:14px">Hands</h3>
       <div id="handsBox"></div>
     </div>
+  </div>
+
+  <div id="library" class="library" hidden>
+    <div class="lib-head">
+      <h2>🎵 Song Library</h2>
+      <input id="libSearch" type="search" placeholder="Search songs…" />
+      <button id="libUpload">⬆ Upload MIDI</button>
+      <button id="libClose">✕ Close</button>
+    </div>
+    <div id="libList" class="lib-list"></div>
   </div>
 
   <footer>

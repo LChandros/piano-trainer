@@ -9,6 +9,7 @@ const ROOT = __dirname;
 const SONGS_DIR = path.join(ROOT, "songs");
 const DATA_DIR = path.join(ROOT, "data");
 const HANDS_FILE = path.join(DATA_DIR, "hand-configs.json");
+const META_FILE = path.join(DATA_DIR, "song-meta.json");
 const PORT = process.env.PORT || 3022;
 const MAX_UPLOAD = 8 * 1024 * 1024; // 8 MB
 fs.mkdirSync(SONGS_DIR, { recursive: true });
@@ -16,6 +17,8 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 
 function readHands() { try { return JSON.parse(fs.readFileSync(HANDS_FILE, "utf8")); } catch (e) { return {}; } }
 function writeHands(m) { try { fs.writeFileSync(HANDS_FILE, JSON.stringify(m, null, 2)); return true; } catch (e) { return false; } }
+function readMeta() { try { return JSON.parse(fs.readFileSync(META_FILE, "utf8")); } catch (e) { return {}; } }
+function writeMeta(m) { try { fs.writeFileSync(META_FILE, JSON.stringify(m, null, 2)); return true; } catch (e) { return false; } }
 
 const MIME = {
   ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "application/javascript",
@@ -82,11 +85,43 @@ const server = http.createServer(function (req, res) {
     return;
   }
 
-  // --- delete an uploaded song ---
+  // --- get all song metadata (favorites, last-played, best score, title) ---
+  if (p === "/api/meta" && req.method === "GET") {
+    return json(res, 200, { meta: readMeta() });
+  }
+
+  // --- merge partial metadata for one song ---
+  if (p === "/api/meta" && req.method === "POST") {
+    const name = url.searchParams.get("name") || "";
+    if (!name) return json(res, 400, { error: "missing name" });
+    const chunks = []; let size = 0, aborted = false;
+    req.on("data", function (c) {
+      size += c.length;
+      if (size > 256 * 1024) { aborted = true; json(res, 413, { error: "too large" }); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on("end", function () {
+      if (aborted) return;
+      let patch;
+      try { patch = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch (e) { return json(res, 400, { error: "bad json" }); }
+      const all = readMeta(); const cur = all[name] || {};
+      for (const k in patch) cur[k] = patch[k];
+      all[name] = cur;
+      if (writeMeta(all)) json(res, 200, { ok: true, meta: cur }); else json(res, 500, { error: "write failed" });
+    });
+    return;
+  }
+
+  // --- delete an uploaded song (also purge its hand config + metadata) ---
   if (p.indexOf("/api/songs/") === 0 && req.method === "DELETE") {
     const name = sanitize(decodeURIComponent(p.slice("/api/songs/".length)));
-    try { fs.unlinkSync(path.join(SONGS_DIR, name)); return json(res, 200, { ok: true }); }
-    catch (e) { return json(res, 404, { error: "not found" }); }
+    try {
+      fs.unlinkSync(path.join(SONGS_DIR, name));
+      const key = "file:" + name;
+      const h = readHands(); if (h[key]) { delete h[key]; writeHands(h); }
+      const m = readMeta(); if (m[key]) { delete m[key]; writeMeta(m); }
+      return json(res, 200, { ok: true });
+    } catch (e) { return json(res, 404, { error: "not found" }); }
   }
 
   // --- serve a stored MIDI file ---

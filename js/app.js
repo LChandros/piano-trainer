@@ -601,7 +601,6 @@
 
     // controls
     var songSel = document.getElementById("song");
-    var uploadBtn = document.getElementById("upload");
     var fileInput = document.getElementById("file");
     var handSel = document.getElementById("hand");
     var modeSel = document.getElementById("mode");
@@ -615,6 +614,16 @@
 
     var loaded = null;          // full song + hand config { name, displayName, bpm, beatsPerMeasure, tracks, multiTrack, trackHand[], splitPitch, overrides }
     var currentSong = null;     // composed song handed to the engine
+
+    // library state
+    var libraryEl = document.getElementById("library");
+    var libListEl = document.getElementById("libList");
+    var libSearch = document.getElementById("libSearch");
+    var currentNameEl = document.getElementById("currentSongName");
+    var uploadedFiles = [];     // filenames from the server
+    var songMeta = {};          // name -> { title, favorite, lastPlayed, bestScore }
+    var currentSongKey = "";
+    var scoreRecorded = false;  // guard so a finished score is logged once
 
     function buildTicks() {
       ticksEl.innerHTML = "";
@@ -717,17 +726,99 @@
     }
 
     function populateSongs(files, selectValue) {
+      uploadedFiles = files || [];
       songSel.innerHTML = "";
       Object.keys(window.SONGS).forEach(function (k) {
         var o = document.createElement("option");
         o.value = "builtin:" + k; o.textContent = window.SONGS[k].name; songSel.appendChild(o);
       });
-      (files || []).forEach(function (f) {
+      uploadedFiles.forEach(function (f) {
         var o = document.createElement("option");
         o.value = "file:" + f; o.textContent = "📄 " + f.replace(/\.midi?$/i, ""); songSel.appendChild(o);
       });
       if (selectValue) songSel.value = selectValue;
     }
+
+    // ----- song metadata + library -----
+    function defaultName(key) {
+      if (key.indexOf("builtin:") === 0) { var s = window.SONGS[key.slice(8)]; return s ? s.name : key; }
+      return key.slice(5).replace(/\.midi?$/i, "");
+    }
+    function displayNameFor(key) {
+      var m = songMeta[key];
+      return (m && m.title) ? m.title : defaultName(key);
+    }
+    function loadMeta() {
+      return fetch("/api/meta").then(function (r) { return r.json(); })
+        .then(function (d) { songMeta = d.meta || {}; }).catch(function () { songMeta = {}; });
+    }
+    function postMeta(key, patch) {
+      songMeta[key] = songMeta[key] || {};
+      for (var k in patch) songMeta[key][k] = patch[k];
+      fetch("/api/meta?name=" + encodeURIComponent(key),
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }).catch(function () {});
+    }
+    function relTime(ts) {
+      if (!ts) return "never played";
+      var s = (Date.now() - ts) / 1000;
+      if (s < 60) return "just now";
+      if (s < 3600) return Math.floor(s / 60) + "m ago";
+      if (s < 86400) return Math.floor(s / 3600) + "h ago";
+      return Math.floor(s / 86400) + "d ago";
+    }
+    function allSongKeys() {
+      var keys = Object.keys(window.SONGS).map(function (k) { return "builtin:" + k; });
+      uploadedFiles.forEach(function (f) { keys.push("file:" + f); });
+      return keys;
+    }
+
+    function renderLibrary() {
+      var q = (libSearch.value || "").toLowerCase();
+      var keys = allSongKeys().filter(function (k) { return displayNameFor(k).toLowerCase().indexOf(q) >= 0; });
+      keys.sort(function (a, b) {
+        var ma = songMeta[a] || {}, mb = songMeta[b] || {};
+        if (!!mb.favorite - !!ma.favorite) return !!mb.favorite - !!ma.favorite;
+        if ((mb.lastPlayed || 0) !== (ma.lastPlayed || 0)) return (mb.lastPlayed || 0) - (ma.lastPlayed || 0);
+        return displayNameFor(a).localeCompare(displayNameFor(b));
+      });
+      libListEl.innerHTML = "";
+      if (!keys.length) { libListEl.innerHTML = '<div class="lib-empty">No songs match. Upload a MIDI to add one.</div>'; return; }
+      keys.forEach(function (key) {
+        var m = songMeta[key] || {}, isFile = key.indexOf("file:") === 0;
+        var row = document.createElement("div"); row.className = "lib-row";
+        var star = document.createElement("button");
+        star.className = "star" + (m.favorite ? " on" : ""); star.textContent = m.favorite ? "★" : "☆";
+        star.title = "Favorite";
+        star.addEventListener("click", function (e) { e.stopPropagation(); postMeta(key, { favorite: !m.favorite }); renderLibrary(); });
+        var grow = document.createElement("div"); grow.className = "grow";
+        var title = document.createElement("div"); title.className = "title"; title.textContent = displayNameFor(key);
+        var meta = document.createElement("div"); meta.className = "meta";
+        meta.textContent = (isFile ? "Uploaded" : "Built-in") + " · " + relTime(m.lastPlayed);
+        grow.appendChild(title); grow.appendChild(meta);
+        row.appendChild(star); row.appendChild(grow);
+        if (m.bestScore) { var sc = document.createElement("div"); sc.className = "score"; sc.textContent = "★ " + m.bestScore; row.appendChild(sc); }
+        if (isFile) {
+          var ren = document.createElement("button"); ren.className = "act"; ren.textContent = "Rename";
+          ren.addEventListener("click", function (e) {
+            e.stopPropagation();
+            var nm = prompt("Rename song:", displayNameFor(key));
+            if (nm && nm.trim()) { postMeta(key, { title: nm.trim() }); renderLibrary(); if (key === currentSongKey) currentNameEl.textContent = nm.trim(); }
+          });
+          var del = document.createElement("button"); del.className = "act"; del.textContent = "Delete";
+          del.addEventListener("click", function (e) {
+            e.stopPropagation();
+            if (!confirm("Delete \"" + displayNameFor(key) + "\"? This removes the uploaded file.")) return;
+            fetch("/api/songs/" + encodeURIComponent(key.slice(5)), { method: "DELETE" })
+              .then(function () { delete songMeta[key]; refreshSongs(); loadMeta().then(renderLibrary); });
+          });
+          row.appendChild(ren); row.appendChild(del);
+        }
+        row.addEventListener("click", function () { songSel.value = key; selectSong(); closeLibrary(); });
+        libListEl.appendChild(row);
+      });
+    }
+    function openLibrary() { loadMeta().then(function () { renderLibrary(); libraryEl.hidden = false; }); }
+    function closeLibrary() { libraryEl.hidden = true; }
 
     function refreshSongs(selectValue) {
       populateSongs([], selectValue);   // builtins immediately (also the offline fallback)
@@ -739,6 +830,10 @@
 
     function selectSong() {
       var v = songSel.value || "";
+      currentSongKey = v;
+      scoreRecorded = false;
+      if (currentNameEl) currentNameEl.textContent = displayNameFor(v);
+      if (v) postMeta(v, { lastPlayed: Date.now() });
       if (v.indexOf("builtin:") === 0) {
         var s = window.SONGS[v.slice(8)];
         var bt = s.tracks ? s.tracks : [{ name: s.name, notes: s.notes }];
@@ -758,14 +853,19 @@
 
     songSel.addEventListener("change", selectSong);
     handSel.addEventListener("change", function () { Engine.setPracticeHand(handSel.value); });
-    uploadBtn.addEventListener("click", function () { fileInput.click(); });
+    document.getElementById("openLibrary").addEventListener("click", openLibrary);
+    document.getElementById("libClose").addEventListener("click", closeLibrary);
+    document.getElementById("libUpload").addEventListener("click", function () { fileInput.click(); });
+    libSearch.addEventListener("input", renderLibrary);
     fileInput.addEventListener("change", function () {
       var f = fileInput.files[0]; if (!f) return;
       f.arrayBuffer().then(function (buf) {
         return fetch("/api/upload?name=" + encodeURIComponent(f.name),
           { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: buf });
       }).then(function (r) { return r.json(); }).then(function (d) {
-        if (d.ok) refreshSongs("file:" + d.name); else alert("Upload failed: " + (d.error || "unknown"));
+        if (!d.ok) { alert("Upload failed: " + (d.error || "unknown")); return; }
+        refreshSongs("file:" + d.name);
+        if (!libraryEl.hidden) loadMeta().then(renderLibrary);  // refresh list if library is open
       }).catch(function (e) { alert("Upload failed: " + (e && e.message || e)); });
       fileInput.value = "";
     });
@@ -806,15 +906,15 @@
       Synth.ensure();
       if (Engine.running) { Engine.pause(); startBtn.textContent = "Resume"; }
       else {
-        if (Engine.finished || Engine.gi >= Engine.groups.length) Engine.reset();
+        if (Engine.finished || Engine.gi >= Engine.groups.length) { Engine.reset(); scoreRecorded = false; }
         Engine.start(); startBtn.textContent = "Pause";
       }
     });
     document.getElementById("restart").addEventListener("click", function () {
-      Engine.reset(); Engine.pause(); startBtn.textContent = "Start";
+      Engine.reset(); Engine.pause(); startBtn.textContent = "Start"; scoreRecorded = false;
     });
 
-    refreshSongs();
+    loadMeta().then(function () { refreshSongs(); });
 
     // main loop — wrapped so a single bad frame can never kill the animation
     var progressFill = document.getElementById("progressFill");
@@ -829,7 +929,14 @@
         if (progressFill) progressFill.style.width = (Engine.progress() * 100).toFixed(1) + "%";
         var mi = Engine.measureInfo();
         if (measureEl) measureEl.textContent = "m. " + mi.current + " / " + mi.total;
-        if (Engine.finished && Engine.running) { Engine.pause(); startBtn.textContent = "Restart"; }
+        if (Engine.finished && Engine.running) {
+          Engine.pause(); startBtn.textContent = "Restart";
+          if (Engine.mode === "score" && !scoreRecorded && currentSongKey) {
+            scoreRecorded = true;
+            var prevBest = (songMeta[currentSongKey] && songMeta[currentSongKey].bestScore) || 0;
+            if (Engine.score > prevBest) postMeta(currentSongKey, { bestScore: Engine.score });
+          }
+        }
       } catch (err) {
         if (window.console) console.error("frame error (recovered):", err);
       }
