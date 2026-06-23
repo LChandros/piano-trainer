@@ -18,7 +18,8 @@ button:active { background: #2c3648; }
 button#start { background: #10391f; border-color: #1c5a33; color: #56e08a; }
 input[type=range] { width: 110px; }
 
-#progress { flex: 0 0 auto; position: relative; height: 10px; background: #11151d; border-bottom: 1px solid #1e2533; cursor: pointer; }
+#progress { flex: 0 0 auto; position: relative; height: 18px; background: #11151d;
+  border-bottom: 1px solid #1e2533; cursor: pointer; touch-action: none; }
 #progress:hover { background: #161b26; }
 #progressFill { height: 100%; width: 0%; background: linear-gradient(90deg, #3aa0ff, #56e08a);
   transition: width 0.1s linear; }

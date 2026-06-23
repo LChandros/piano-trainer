@@ -951,12 +951,41 @@
     modeSel.addEventListener("change", function () { Engine.setMode(modeSel.value); });
     labelsChk.addEventListener("change", function () { Engine.showLabels = labelsChk.checked; });
 
-    // click the progress bar to jump to that measure
+    // progress bar: TAP to seek, DRAG to paint a loop region (touch-friendly)
     var progressBar = document.getElementById("progress");
-    progressBar.addEventListener("click", function (e) {
+    var dragStartM = null, dragMoved = false, dragStartX = 0;
+    function measureAtFrac(frac) {
+      frac = Math.max(0, Math.min(1, frac));
+      return Math.max(1, Math.min(Engine.totalMeasures, Math.floor(frac * Engine.totalMeasures) + 1));
+    }
+    progressBar.addEventListener("pointerdown", function (e) {
       var rect = progressBar.getBoundingClientRect();
-      if (rect.width > 0) Engine.seekToFraction((e.clientX - rect.left) / rect.width);
+      if (rect.width <= 0) return;
+      dragStartX = e.clientX; dragMoved = false;
+      dragStartM = measureAtFrac((e.clientX - rect.left) / rect.width);
+      progressBar.setPointerCapture(e.pointerId);
     });
+    progressBar.addEventListener("pointermove", function (e) {
+      if (dragStartM == null) return;
+      if (Math.abs(e.clientX - dragStartX) > 6) dragMoved = true;
+      if (!dragMoved) return;
+      var rect = progressBar.getBoundingClientRect();
+      var curM = measureAtFrac((e.clientX - rect.left) / rect.width);
+      loopChk.checked = true;
+      Engine.setLoop(true, Math.min(dragStartM, curM), Math.max(dragStartM, curM));
+      loopFrom.value = Engine.loopStartMeasure; loopTo.value = Engine.loopEndMeasure;
+      updateLoopBand();
+    });
+    function endProgressDrag(e) {
+      if (dragStartM == null) return;
+      if (!dragMoved) {
+        var rect = progressBar.getBoundingClientRect();
+        if (rect.width > 0) Engine.seekToFraction((e.clientX - rect.left) / rect.width);  // tap = seek
+      }
+      dragStartM = null; dragMoved = false;
+    }
+    progressBar.addEventListener("pointerup", endProgressDrag);
+    progressBar.addEventListener("pointercancel", endProgressDrag);
 
     // ----- A-B section loop -----
     var loopChk = document.getElementById("loopChk");
