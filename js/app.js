@@ -655,8 +655,9 @@
       var v = songSel.value || "";
       if (v.indexOf("builtin:") === 0) {
         var s = window.SONGS[v.slice(8)];
+        var bt = s.tracks ? s.tracks : [{ name: s.name, notes: s.notes }];
         loaded = { name: v, displayName: s.name, bpm: s.bpm, beatsPerMeasure: s.beatsPerMeasure,
-          tracks: [{ name: s.name, notes: s.notes }], multiTrack: false, trackHand: ["R"], splitPitch: 60, overrides: {} };
+          tracks: bt, multiTrack: bt.length > 1, trackHand: autoAssignHands(bt), splitPitch: 60, overrides: {} };
         fetchHandCfg(loaded).then(function () { applyLoaded(false); });
       } else if (v.indexOf("file:") === 0) {
         var fname = v.slice(5);

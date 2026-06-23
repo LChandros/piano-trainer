@@ -14,13 +14,23 @@
   }
 
   // MIDI: C4=60 D4=62 E4=64 F4=65 G4=67 A4=69 B4=71 C5=72
-  var TWINKLE = seq([
+  // Right hand: the melody (all >= C4)
+  var TWINKLE_RH = seq([
     [60,1],[60,1],[67,1],[67,1],[69,1],[69,1],[67,2],
     [65,1],[65,1],[64,1],[64,1],[62,1],[62,1],[60,2],
     [67,1],[67,1],[65,1],[65,1],[64,1],[64,1],[62,2],
     [67,1],[67,1],[65,1],[65,1],[64,1],[64,1],[62,2],
     [60,1],[60,1],[67,1],[67,1],[69,1],[69,1],[67,2],
     [65,1],[65,1],[64,1],[64,1],[62,1],[62,1],[60,2]
+  ]);
+  // Left hand: simple I-IV-V bass, half notes (all below C4). C3=48 G2=43 F3=53
+  var TWINKLE_LH = seq([
+    [48,2],[48,2],[53,2],[48,2],
+    [53,2],[48,2],[43,2],[48,2],
+    [48,2],[53,2],[48,2],[43,2],
+    [48,2],[53,2],[48,2],[43,2],
+    [48,2],[48,2],[53,2],[48,2],
+    [53,2],[48,2],[43,2],[48,2]
   ]);
 
   var ODE = seq([
@@ -31,7 +41,8 @@
   ]);
 
   window.SONGS = {
-    twinkle: { name: "Twinkle Twinkle", bpm: 100, beatsPerMeasure: 4, notes: TWINKLE },
+    twinkle: { name: "Twinkle Twinkle", bpm: 100, beatsPerMeasure: 4,
+               tracks: [{ name: "Right hand", notes: TWINKLE_RH }, { name: "Left hand", notes: TWINKLE_LH }] },
     ode:     { name: "Ode to Joy",      bpm: 112, beatsPerMeasure: 4, notes: ODE }
   };
 })();
