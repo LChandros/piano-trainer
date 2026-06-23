@@ -143,6 +143,13 @@
       Synth.off(pitch);
       this.onNoteOff(pitch);
     },
+    // release every currently-held pitch. Used when focus is lost: a keyup/note-off
+    // can be dropped if the window blurs or the page is hidden while a key is down
+    // (common right as a song ends), which would otherwise leave the note hanging.
+    releaseAll: function () {
+      var held = Object.keys(this.down);
+      for (var i = 0; i < held.length; i++) this.release(Number(held[i]));
+    },
     initQwerty: function () {
       var self = this;
       window.addEventListener("keydown", function (e) {
@@ -153,6 +160,12 @@
       window.addEventListener("keyup", function (e) {
         var p = QWERTY[e.key.toLowerCase()];
         if (p != null) self.release(p);
+      });
+      // safety net for stuck notes: drop all held keys when the window loses focus
+      // or the tab is hidden, since the matching keyup may never be delivered.
+      window.addEventListener("blur", function () { self.releaseAll(); });
+      document.addEventListener("visibilitychange", function () {
+        if (document.hidden) self.releaseAll();
       });
     },
     initMIDI: function (statusEl) {
