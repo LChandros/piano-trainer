@@ -358,7 +358,9 @@
         var r = this.whiteRects[i], held = Input.down[r.pitch];
         var fl = this.flash[r.pitch];
         var active = fl && fl.until > this.wallNow;
-        ctx.fillStyle = active ? (fl.ok ? "#56e08a" : "#ff7a7a") : (held ? "#cfe6ff" : "#f2f5f9");
+        // held keys stay strongly lit for the whole press; flash is momentary feedback on top
+        ctx.fillStyle = held ? (active && !fl.ok ? "#ff7a7a" : "#5aa9f0")
+                             : (active ? (fl.ok ? "#56e08a" : "#ff7a7a") : "#f2f5f9");
         ctx.fillRect(r.x + 1, kbTop, r.w - 2, kbH);
         ctx.strokeStyle = "#0b0d12"; ctx.lineWidth = 1;
         ctx.strokeRect(r.x + 1, kbTop, r.w - 2, kbH);
@@ -373,7 +375,8 @@
         var b = this.blackRects[j], bheld = Input.down[b.pitch];
         var bfl = this.flash[b.pitch];
         var bactive = bfl && bfl.until > this.wallNow;
-        ctx.fillStyle = bactive ? (bfl.ok ? "#2e9e5b" : "#c14a4a") : (bheld ? "#5a6b85" : "#1a1f2b");
+        ctx.fillStyle = bheld ? (bactive && !bfl.ok ? "#c14a4a" : "#3f86d6")
+                              : (bactive ? (bfl.ok ? "#2e9e5b" : "#c14a4a") : "#1a1f2b");
         ctx.fillRect(b.x, kbTop, b.w, kbH * 0.62);
         ctx.strokeStyle = "#000"; ctx.strokeRect(b.x, kbTop, b.w, kbH * 0.62);
       }
