@@ -8,6 +8,8 @@
   var WHITE_SET = { 0:1, 2:1, 4:1, 5:1, 7:1, 9:1, 11:1 }; // semitone classes that are white keys
   var KEYBOARD_H = 150;                  // px reserved at bottom for the drawn keyboard
   var LEAD_SEC = 3.0;                    // how many seconds of song are visible above the hit line
+  var PERFECT_WINDOW = 0.11;             // |Δt| for a "Perfect" hit in score mode (seconds)
+  var GOOD_WINDOW = 0.23;                // |Δt| for a "Good" hit; past this = miss
   var NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
   // Computer keyboard -> MIDI, classic two-row layout:
   //   bottom row (Z..M + sharps) = lower octave (C3=48)  → left hand
@@ -157,6 +159,8 @@
     practiceHand: "both",       // "both" | "R" | "L"
     autoNotes: [], autoIdx: 0,  // notes of the non-practiced hand (auto-played + dimmed)
     lowPitch: 48, highPitch: 72, // visible keyboard range (C3..C5 default; widens to song)
+    reqNotes: [], missPtr: 0,   // score mode: required notes sorted by start + miss cursor
+    score: 0, combo: 0, maxCombo: 0, counts: { perfect: 0, good: 0, miss: 0 }, judgeFx: null,
 
     load: function (song, tempoScale, preserveNow) {
       var pos = preserveNow ? this.now : null;
@@ -200,14 +204,24 @@
         .sort(function (a, b) { return a.start - b.start; });
       this.autoNotes = this.notes.filter(function (n) { return !n.req; })
         .sort(function (a, b) { return a.start - b.start; });
+      this.reqNotes = this.notes.filter(function (n) { return n.req; })
+        .sort(function (a, b) { return a.start - b.start; });
     },
 
     setPracticeHand: function (h) {
       this.practiceHand = h;
       var pos = this.now;
       this.deriveHands();
+      if (this.mode === "score") this.resetScore();
       this.now = pos; this.reseat();
     },
+
+    resetScore: function () {
+      this.score = 0; this.combo = 0; this.maxCombo = 0;
+      this.counts = { perfect: 0, good: 0, miss: 0 }; this.judgeFx = null;
+      this.reqNotes.forEach(function (n) { n.judged = null; });
+    },
+    flashJudge: function (text, color) { this.judgeFx = { text: text, color: color, until: this.wallNow + 600 }; },
 
     measureInfo: function () {
       if (this.now < 0) return { current: 0, total: this.totalMeasures || 0 };
@@ -261,23 +275,51 @@
       for (var a = 0; a < this.autoNotes.length; a++) {
         if (this.autoNotes[a].start >= this.now - 1e-6) { this.autoIdx = a; break; }
       }
+      // score mode: clear judgments and park the miss cursor at the playhead
+      this.reqNotes.forEach(function (n) { n.judged = null; });
+      this.missPtr = this.reqNotes.length;
+      for (var b = 0; b < this.reqNotes.length; b++) {
+        if (this.reqNotes[b].start >= this.now - GOOD_WINDOW) { this.missPtr = b; break; }
+      }
     },
 
     reset: function () {
       this.gi = 0; this.now = -LEAD_SEC; this.finished = false; this.flash = {}; this.autoIdx = 0;
       this.groups.forEach(function (g) { g.hit = {}; g.satisfied = false; });
+      this.resetScore(); this.missPtr = 0;
     },
 
     start: function () { this.running = true; this.lastTs = 0; },
     pause: function () { this.running = false; },
 
-    setMode: function (m) { this.mode = m; },
+    setMode: function (m) {
+      this.mode = m;
+      if (m === "score") { this.resetScore(); this.reseat(); }
+    },
 
     // called by Input hub
     onPress: function (pitch) {
       // flashes expire on the WALL clock (not the song clock, which freezes when paused)
       this.flash[pitch] = { until: this.wallNow + 250, ok: false };
       if (this.finished) return;
+      if (this.mode === "score") {
+        // match the nearest unjudged required note of this pitch within the timing window
+        var best = null, bestD = GOOD_WINDOW + 1;
+        for (var i = this.missPtr; i < this.reqNotes.length; i++) {
+          var rn = this.reqNotes[i];
+          if (rn.start - this.now > GOOD_WINDOW) break;   // sorted; rest are too far ahead
+          if (rn.judged || rn.pitch !== pitch) continue;
+          var d = Math.abs(rn.start - this.now);
+          if (d < bestD) { bestD = d; best = rn; }
+        }
+        if (best && bestD <= GOOD_WINDOW) {
+          if (bestD <= PERFECT_WINDOW) { best.judged = "perfect"; this.score += 100; this.counts.perfect++; this.flashJudge("Perfect!", "#56e08a"); }
+          else { best.judged = "good"; this.score += 60; this.counts.good++; this.flashJudge("Good", "#ffd54a"); }
+          this.combo++; if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+          this.flash[pitch] = { until: this.wallNow + 250, ok: true };
+        }
+        return;
+      }
       if (this.mode === "wait" && this.gi < this.groups.length) {
         var g = this.groups[this.gi];
         if (g.required[pitch] && !g.hit[pitch]) {
@@ -292,26 +334,32 @@
 
     update: function (dt) {
       if (!this.running || this.finished) return;
-      if (this.gi >= this.groups.length) {
-        // no (more) required notes — let the tail (incl. auto-played hand) scroll past
+      if (this.mode === "wait") {
+        if (this.gi >= this.groups.length) {
+          // no (more) required notes — let the tail (incl. auto-played hand) scroll past
+          this.now += dt; this.playAuto();
+          if (this.now > this.songEnd + 1.0) this.finished = true;
+          return;
+        }
+        var gate = this.groups[this.gi].start;
+        if (this.now < gate) this.now = Math.min(this.now + dt, gate);
+        else if (this.groups[this.gi].satisfied) this.gi++;   // else: frozen, waiting for player
+        this.playAuto();
+      } else {
+        // score mode: clock never stops; judge missed notes as they pass
         this.now += dt;
+        this.judgeMisses();
         this.playAuto();
         if (this.now > this.songEnd + 1.0) this.finished = true;
-        return;
       }
-      if (this.mode === "wait") {
-        var gate = this.groups[this.gi].start;
-        if (this.now < gate) {
-          this.now = Math.min(this.now + dt, gate);
-        } else if (this.groups[this.gi].satisfied) {
-          this.gi++;
-        } // else: frozen at the gate, waiting for the player
-      } else {
-        // rhythm / free preview: clock never stops
-        this.now += dt;
-        while (this.gi < this.groups.length && this.groups[this.gi].start < this.now - 0.05) this.gi++;
+    },
+
+    // score mode: any required note whose window has fully passed unplayed is a miss
+    judgeMisses: function () {
+      while (this.missPtr < this.reqNotes.length && this.reqNotes[this.missPtr].start < this.now - GOOD_WINDOW) {
+        var n = this.reqNotes[this.missPtr++];
+        if (!n.judged) { n.judged = "miss"; this.counts.miss++; this.combo = 0; this.flashJudge("Miss", "#ff7a7a"); }
       }
-      this.playAuto();
     },
 
     // auto-play notes of the non-practiced hand as the clock passes them
@@ -413,7 +461,7 @@
       ctx.beginPath(); ctx.moveTo(0, hitY); ctx.lineTo(W, hitY); ctx.stroke();
       // keyboard
       this.drawKeyboard();
-      // "next note" hint label
+      // "next note" hint label (wait mode)
       if (this.mode === "wait" && this.gi < this.groups.length && !this.finished) {
         var g = this.groups[this.gi];
         var pitches = Object.keys(g.required).map(Number).map(noteLabel).join(" + ");
@@ -424,11 +472,40 @@
         ctx.fillText(waiting ? "Play: " + pitches : "Next: " + pitches, W / 2, 26);
         ctx.textAlign = "left";
       }
+      // score HUD
+      if (this.mode === "score" && !this.finished) {
+        ctx.fillStyle = "#e7ecf3"; ctx.font = "800 18px system-ui, sans-serif"; ctx.textAlign = "left";
+        ctx.fillText("Score " + this.score, 12, 26);
+        if (this.combo > 1) { ctx.fillStyle = "#56e08a"; ctx.fillText("Combo x" + this.combo, 12, 50); }
+        ctx.fillStyle = "#9aa6b8"; ctx.font = "600 14px system-ui, sans-serif"; ctx.textAlign = "right";
+        ctx.fillText("Accuracy " + this.accuracy() + "%", W - 12, 26); ctx.textAlign = "left";
+        if (this.judgeFx && this.judgeFx.until > this.wallNow) {
+          ctx.globalAlpha = Math.max(0, (this.judgeFx.until - this.wallNow) / 600);
+          ctx.fillStyle = this.judgeFx.color; ctx.font = "800 36px system-ui, sans-serif"; ctx.textAlign = "center";
+          ctx.fillText(this.judgeFx.text, W / 2, hitY * 0.42); ctx.textAlign = "left"; ctx.globalAlpha = 1;
+        }
+      }
       if (this.finished) {
-        ctx.fillStyle = "#56e08a"; ctx.font = "800 30px system-ui, sans-serif";
-        ctx.textAlign = "center"; ctx.fillText("Song complete! 🎵", W / 2, hitY / 2);
+        ctx.textAlign = "center";
+        if (this.mode === "score") {
+          var cy = hitY * 0.5;
+          ctx.fillStyle = "#56e08a"; ctx.font = "800 30px system-ui, sans-serif";
+          ctx.fillText("Final score: " + this.score, W / 2, cy - 40);
+          ctx.font = "600 18px system-ui, sans-serif"; ctx.fillStyle = "#e7ecf3";
+          ctx.fillText("Accuracy " + this.accuracy() + "%   ·   Max combo x" + this.maxCombo, W / 2, cy);
+          ctx.fillStyle = "#9aa6b8";
+          ctx.fillText("Perfect " + this.counts.perfect + "   Good " + this.counts.good + "   Miss " + this.counts.miss, W / 2, cy + 28);
+        } else {
+          ctx.fillStyle = "#56e08a"; ctx.font = "800 30px system-ui, sans-serif";
+          ctx.fillText("Song complete! 🎵", W / 2, hitY / 2);
+        }
         ctx.textAlign = "left";
       }
+    },
+
+    accuracy: function () {
+      var t = this.counts.perfect + this.counts.good + this.counts.miss;
+      return t ? Math.round((this.counts.perfect + this.counts.good * 0.5) / t * 100) : 100;
     },
 
     drawKeyboard: function () {
