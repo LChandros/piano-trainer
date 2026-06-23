@@ -25,9 +25,28 @@
     whiteNote: "#3aa0ff", blackNote: "#9b6bff", hitNote: "#ffd54a",
     labelBg: "#ffe14a", labelText: "#10131a"
   };
+  // Preset palettes inspired by classic command-prompt / terminal color schemes.
+  var THEME_SCHEMES = {
+    "Classic Green (DOS)": { whiteNote: "#33ff33", blackNote: "#1f9e1f", hitNote: "#b6ffb6", labelBg: "#33ff33", labelText: "#001500" },
+    "Amber (CRT)":         { whiteNote: "#ffb000", blackNote: "#b37400", hitNote: "#ffd480", labelBg: "#ffb000", labelText: "#1a0f00" },
+    "Matrix":              { whiteNote: "#00ff41", blackNote: "#008f11", hitNote: "#aaffaa", labelBg: "#00ff41", labelText: "#001a00" },
+    "PowerShell Blue":     { whiteNote: "#56a0ff", blackNote: "#3a6fd6", hitNote: "#cfe4ff", labelBg: "#ffffff", labelText: "#012456" },
+    "Ubuntu Terminal":     { whiteNote: "#ffffff", blackNote: "#d7d7d7", hitNote: "#e95420", labelBg: "#e95420", labelText: "#300a24" },
+    "Solarized Dark":      { whiteNote: "#268bd2", blackNote: "#2aa198", hitNote: "#b58900", labelBg: "#eee8d5", labelText: "#002b36" },
+    "Command Prompt":      { whiteNote: "#c0c0c0", blackNote: "#808080", hitNote: "#ffffff", labelBg: "#c0c0c0", labelText: "#000000" }
+  };
+  // User-saved defaults (the "Reset to defaults" target). Falls back to factory THEME_DEFAULTS.
+  var themeDefaults = (function () {
+    var d = {};
+    for (var k in THEME_DEFAULTS) d[k] = THEME_DEFAULTS[k];
+    try { var s = JSON.parse(localStorage.getItem("pt-theme-default")); if (s) for (var j in s) if (d.hasOwnProperty(j)) d[j] = s[j]; } catch (e) {}
+    return d;
+  })();
+  function saveDefaults() { try { localStorage.setItem("pt-theme-default", JSON.stringify(themeDefaults)); } catch (e) {} }
+  // Active theme: last-used colors (pt-theme), otherwise the user defaults.
   var theme = (function () {
     var t = {};
-    for (var k in THEME_DEFAULTS) t[k] = THEME_DEFAULTS[k];
+    for (var k in themeDefaults) t[k] = themeDefaults[k];
     try { var s = JSON.parse(localStorage.getItem("pt-theme")); if (s) for (var j in s) if (t.hasOwnProperty(j)) t[j] = s[j]; } catch (e) {}
     return t;
   })();
@@ -700,17 +719,39 @@
       colorInputs.forEach(function (inp) { inp.value = theme[inp.getAttribute("data-theme")]; });
     }
     syncColorInputs();
+
+    // color-scheme picker (command-prompt-inspired presets)
+    var schemeSel = document.getElementById("scheme");
+    var placeholder = document.createElement("option");
+    placeholder.value = ""; placeholder.textContent = "Custom…";
+    schemeSel.appendChild(placeholder);
+    Object.keys(THEME_SCHEMES).forEach(function (name) {
+      var o = document.createElement("option"); o.value = name; o.textContent = name;
+      schemeSel.appendChild(o);
+    });
+    schemeSel.addEventListener("change", function () {
+      var s = THEME_SCHEMES[schemeSel.value];
+      if (!s) return;
+      for (var k in s) if (theme.hasOwnProperty(k)) theme[k] = s[k];
+      saveTheme(); syncColorInputs();
+    });
+
     colorInputs.forEach(function (inp) {
       inp.addEventListener("input", function () {
         theme[inp.getAttribute("data-theme")] = inp.value; saveTheme();
+        schemeSel.value = ""; // manual edit no longer matches a named scheme
       });
     });
     document.getElementById("settingsBtn").addEventListener("click", function () {
       settingsPanel.hidden = !settingsPanel.hidden;
     });
+    document.getElementById("setDefaultTheme").addEventListener("click", function () {
+      for (var k in theme) themeDefaults[k] = theme[k];
+      saveDefaults();
+    });
     document.getElementById("resetTheme").addEventListener("click", function () {
-      for (var k in THEME_DEFAULTS) theme[k] = THEME_DEFAULTS[k];
-      saveTheme(); syncColorInputs();
+      for (var k in themeDefaults) theme[k] = themeDefaults[k];
+      saveTheme(); syncColorInputs(); schemeSel.value = "";
     });
     tempo.addEventListener("input", function () {
       tempoVal.textContent = Math.round(parseFloat(tempo.value) * 100) + "%";
