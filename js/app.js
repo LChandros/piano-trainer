@@ -28,13 +28,54 @@
     whiteNote: "#3aa0ff", blackNote: "#9b6bff", hitNote: "#ffd54a",
     labelBg: "#ffe14a", labelText: "#10131a"
   };
+  // Built-in color schemes, inspired by classic command-prompt palettes.
+  var THEME_SCHEMES = [
+    { name: "Default", colors: THEME_DEFAULTS },
+    { name: "Classic Green (terminal)", colors: {
+      whiteNote: "#33ff66", blackNote: "#00a844", hitNote: "#d6ffe0",
+      labelBg: "#0a3a1a", labelText: "#bdffce" } },
+    { name: "Amber Monochrome", colors: {
+      whiteNote: "#ffb000", blackNote: "#c07800", hitNote: "#fff1c0",
+      labelBg: "#3a2600", labelText: "#ffe6a8" } },
+    { name: "Command Prompt Blue", colors: {
+      whiteNote: "#c0c0c0", blackNote: "#5c5cff", hitNote: "#ffffff",
+      labelBg: "#000080", labelText: "#ffffff" } },
+    { name: "PowerShell", colors: {
+      whiteNote: "#eeedf0", blackNote: "#7aa6ff", hitNote: "#ffe066",
+      labelBg: "#012456", labelText: "#eeedf0" } },
+    { name: "Cyan / Magenta", colors: {
+      whiteNote: "#00d7d7", blackNote: "#d700d7", hitNote: "#ffffff",
+      labelBg: "#3a0a3a", labelText: "#9bf0f0" } }
+  ];
+  // The "default" the Reset button restores to — the user's saved default if any,
+  // otherwise the built-in factory defaults.
+  function loadUserDefaults() {
+    var d = {};
+    for (var k in THEME_DEFAULTS) d[k] = THEME_DEFAULTS[k];
+    try { var s = JSON.parse(localStorage.getItem("pt-theme-default")); if (s) for (var j in s) if (d.hasOwnProperty(j)) d[j] = s[j]; } catch (e) {}
+    return d;
+  }
+  var themeUserDefaults = loadUserDefaults();
   var theme = (function () {
     var t = {};
-    for (var k in THEME_DEFAULTS) t[k] = THEME_DEFAULTS[k];
+    for (var k in themeUserDefaults) t[k] = themeUserDefaults[k];
     try { var s = JSON.parse(localStorage.getItem("pt-theme")); if (s) for (var j in s) if (t.hasOwnProperty(j)) t[j] = s[j]; } catch (e) {}
     return t;
   })();
   function saveTheme() { try { localStorage.setItem("pt-theme", JSON.stringify(theme)); } catch (e) {} }
+  function setUserDefaults() {
+    for (var k in theme) if (themeUserDefaults.hasOwnProperty(k)) themeUserDefaults[k] = theme[k];
+    try { localStorage.setItem("pt-theme-default", JSON.stringify(themeUserDefaults)); } catch (e) {}
+  }
+  // Index of the scheme whose colors exactly match the current theme, or -1 (custom).
+  function matchingSchemeIndex() {
+    for (var i = 0; i < THEME_SCHEMES.length; i++) {
+      var c = THEME_SCHEMES[i].colors, ok = true;
+      for (var k in c) if (theme[k] !== c[k]) { ok = false; break; }
+      if (ok) return i;
+    }
+    return -1;
+  }
 
   // ---------- tiny synth ----------
   var Synth = {
@@ -882,20 +923,43 @@
     // settings panel (theme colors) — applied live, persisted to localStorage
     var settingsPanel = document.getElementById("settings");
     var colorInputs = settingsPanel.querySelectorAll("input[data-theme]");
+    var schemeSel = document.getElementById("scheme");
+    THEME_SCHEMES.forEach(function (s, i) {
+      var o = document.createElement("option"); o.value = i; o.textContent = s.name; schemeSel.appendChild(o);
+    });
+    var customOpt = document.createElement("option");
+    customOpt.value = ""; customOpt.textContent = "Custom"; schemeSel.appendChild(customOpt);
     function syncColorInputs() {
       colorInputs.forEach(function (inp) { inp.value = theme[inp.getAttribute("data-theme")]; });
+      var mi = matchingSchemeIndex();
+      schemeSel.value = mi >= 0 ? String(mi) : "";
     }
     syncColorInputs();
     colorInputs.forEach(function (inp) {
       inp.addEventListener("input", function () {
         theme[inp.getAttribute("data-theme")] = inp.value; saveTheme();
+        var mi = matchingSchemeIndex();
+        schemeSel.value = mi >= 0 ? String(mi) : "";
       });
+    });
+    schemeSel.addEventListener("change", function () {
+      var i = parseInt(schemeSel.value, 10);
+      if (isNaN(i) || !THEME_SCHEMES[i]) return; // "Custom" — leave colors as-is
+      var c = THEME_SCHEMES[i].colors;
+      for (var k in c) if (theme.hasOwnProperty(k)) theme[k] = c[k];
+      saveTheme(); syncColorInputs();
     });
     document.getElementById("settingsBtn").addEventListener("click", function () {
       settingsPanel.hidden = !settingsPanel.hidden;
     });
+    document.getElementById("setDefaultTheme").addEventListener("click", function () {
+      setUserDefaults();
+      var btn = document.getElementById("setDefaultTheme"), prev = btn.textContent;
+      btn.textContent = "Saved as default ✓";
+      setTimeout(function () { btn.textContent = prev; }, 1400);
+    });
     document.getElementById("resetTheme").addEventListener("click", function () {
-      for (var k in THEME_DEFAULTS) theme[k] = THEME_DEFAULTS[k];
+      for (var k in themeUserDefaults) theme[k] = themeUserDefaults[k];
       saveTheme(); syncColorInputs();
     });
     tempo.addEventListener("input", function () {
