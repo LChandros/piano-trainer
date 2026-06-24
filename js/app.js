@@ -168,11 +168,12 @@
         if (document.hidden) self.releaseAll();
       });
     },
-    initMIDI: function (statusEl) {
+    lastMidiTs: 0, midiConnected: false,
+    // report(state, text): state is "on" | "wait" | "off"
+    initMIDI: function (report) {
       var self = this;
       if (!navigator.requestMIDIAccess) {
-        statusEl.textContent = "Live MIDI: unavailable here (needs https/localhost) — use the on-screen or computer keyboard";
-        statusEl.className = "midi-status off";
+        report("off", "⚠ No MIDI support — use Kiwi Browser (not Silk)");
         return;
       }
       navigator.requestMIDIAccess({ sysex: false }).then(function (access) {
@@ -180,24 +181,20 @@
           access.inputs.forEach(function (inp) { inp.onmidimessage = onMsg; });
           var names = [];
           access.inputs.forEach(function (inp) { names.push(inp.name); });
-          if (names.length) {
-            statusEl.textContent = "Live MIDI: " + names.join(", ");
-            statusEl.className = "midi-status on";
-          } else {
-            statusEl.textContent = "Live MIDI: ready — no keyboard connected yet";
-            statusEl.className = "midi-status";
-          }
+          if (names.length) { self.midiConnected = true; report("on", "🎹 " + names.join(", ")); }
+          else { self.midiConnected = false; report("wait", "🎹 No keyboard — plug in & power on"); }
         }
         function onMsg(e) {
           var s = e.data[0] & 0xf0;
-          if (s === 0x90 && e.data[2] > 0) self.press(e.data[1], e.data[2]);
-          else if (s === 0x80 || (s === 0x90 && e.data[2] === 0)) self.release(e.data[1]);
+          if (s === 0x90 && e.data[2] > 0) {
+            self.lastMidiTs = (typeof performance !== "undefined") ? performance.now() : 0;
+            self.press(e.data[1], e.data[2]);
+          } else if (s === 0x80 || (s === 0x90 && e.data[2] === 0)) self.release(e.data[1]);
         }
         bind();
         access.onstatechange = bind;
       }, function () {
-        statusEl.textContent = "Live MIDI: access denied";
-        statusEl.className = "midi-status off";
+        report("off", "⚠ MIDI access denied");
       });
     }
   };
@@ -654,7 +651,13 @@
     Input.onNoteOn = function (p) { Engine.onPress(p); };
     Input.onNoteOff = function () {};
     Input.initQwerty();
-    Input.initMIDI(document.getElementById("midiStatus"));
+    var midiBadge = document.getElementById("midiBadge");
+    var midiStatusFooter = document.getElementById("midiStatus");
+    function reportMidi(state, text) {
+      if (midiBadge) { midiBadge.textContent = text; midiBadge.className = "midi-badge " + state; }
+      if (midiStatusFooter) { midiStatusFooter.textContent = text; midiStatusFooter.className = "midi-status " + (state === "on" ? "on" : state === "off" ? "off" : ""); }
+    }
+    Input.initMIDI(reportMidi);
 
     // on-screen piano via pointer; clicking a falling note flips its hand
     var activePointer = {};
@@ -1077,6 +1080,10 @@
     function frame(ts) {
       try {
         Engine.wallNow = ts;   // always-advancing wall clock for flash expiry
+        if (midiBadge && Input.midiConnected) {
+          if (Input.lastMidiTs && ts - Input.lastMidiTs < 250) midiBadge.classList.add("live");
+          else midiBadge.classList.remove("live");
+        }
         if (!Engine.lastTs) Engine.lastTs = ts;
         var dt = Math.min((ts - Engine.lastTs) / 1000, 0.05);
         Engine.lastTs = ts;

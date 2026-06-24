@@ -8,6 +8,12 @@ header { display: flex; align-items: center; gap: 14px; padding: 8px 14px;
   background: #11151d; border-bottom: 1px solid #1e2533; flex: 0 0 auto; flex-wrap: wrap; }
 header h1 { font-size: 16px; margin: 0; font-weight: 700; letter-spacing: .2px; }
 header .tag { font-size: 11px; color: #6f7a8c; background: #1a1f2b; padding: 2px 8px; border-radius: 999px; }
+.midi-badge { font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 999px;
+  border: 1px solid #2c3648; background: #1a1f2b; white-space: nowrap; transition: background .12s, color .12s, box-shadow .12s; }
+.midi-badge.on   { color: #56e08a; border-color: #1c5a33; background: #10391f; }
+.midi-badge.wait { color: #ffce6b; border-color: #5a4a1c; background: #2a2410; }
+.midi-badge.off  { color: #ff9b6b; border-color: #5a2a1c; background: #2a1410; }
+.midi-badge.live { box-shadow: 0 0 0 3px rgba(86,224,138,0.45); color: #aaf3c6; }
 
 .controls { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-wrap: wrap; }
 label { font-size: 12px; color: #8a93a3; display: flex; align-items: center; gap: 6px; }
