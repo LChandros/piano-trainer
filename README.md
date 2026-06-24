@@ -51,6 +51,24 @@ Then open `http://<host>:3022/`. No dependencies — Node core modules only.
 - `phase0-midi-test.html` — standalone diagnostic to confirm a host can read USB MIDI
 - `songs/` — uploaded MIDI files (git-ignored)
 
+## Deployment (production)
+Live at **https://piano.fablabz.io**.
+
+- Runs on the home server **ctesiphon** under PM2: `piano-trainer` (`PORT=3022`,
+  `/home/tyahn/piano-trainer/`, `pm2 save`'d to survive reboot).
+- Published through the existing `ctesiphon-websites` **cloudflared** tunnel:
+  an ingress rule in `~/.cloudflared/config.yml` maps `piano.fablabz.io` →
+  `http://localhost:3022`; the DNS CNAME was created with
+  `cloudflared tunnel route dns ctesiphon-websites piano.fablabz.io`.
+- HTTPS (Cloudflare-terminated) makes it a secure context, so **Web MIDI is active**
+  here — required for reading a USB-MIDI keyboard from the browser.
+- **Deploy an update:** edit on the droplet source, then
+  `rsync -az --delete --exclude node_modules --exclude '*.log' ./ ctesiphon:/home/tyahn/piano-trainer/`
+  and `ssh ctesiphon "pm2 restart piano-trainer"`.
+
+The intended client is an Amazon Fire HD 10 running **Kiwi Browser** (Chromium —
+Silk does not support Web MIDI), with a home-screen shortcut to the URL above.
+
 ## Known limitations
 - The MIDI parser uses the file's first tempo and time signature (constant-tempo
   assumption) — fine for most practice MIDIs.
